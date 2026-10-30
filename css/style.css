@@ -184,6 +184,16 @@ select.tb-btn { padding: 4px 6px; }
 
 /* ---------- annotations ---------- */
 .tb-sep { width: 1px; height: 18px; background: var(--line); flex: none; }
+.tb-btn svg { width: 15px; height: 15px; display: block; }
+#btn-hl, #btn-pen, #btn-note, #btn-erase { padding: 6px 8px; line-height: 0; }
+#tip {
+  position: fixed; z-index: 200;
+  background: var(--text); color: var(--bg);
+  font-size: 11px; padding: 4px 9px; border-radius: 5px;
+  pointer-events: none; transform: translateX(-50%);
+  white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.3);
+}
+#tip[hidden] { display: none; }
 #annot-pal { display: flex; gap: 5px; align-items: center; }
 #annot-pal[hidden] { display: none; }
 .pc {

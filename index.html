@@ -22,10 +22,10 @@
       <button class="pc" style="--c:#ff7eb0" data-c="#ff7eb0"></button>
       <button class="pc" style="--c:#6cd8ff" data-c="#6cd8ff"></button>
     </div>
-    <button id="btn-hl" class="tb-btn" data-i18n-title="hlTitle">▮</button>
-    <button id="btn-pen" class="tb-btn" data-i18n-title="penTitle">✏️</button>
-    <button id="btn-note" class="tb-btn" data-i18n-title="noteTitle">📝</button>
-    <button id="btn-erase" class="tb-btn" data-i18n-title="eraseTitle">🧽</button>
+    <button id="btn-hl" class="tb-btn" data-i18n-title="hlTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 8.5-8.5a1.8 1.8 0 0 1 2.5 0l1.5 1.5a1.8 1.8 0 0 1 0 2.5L10 19z"/><path d="m13 9 2.5 2.5"/><path d="M3.5 20.5h9"/></svg></button>
+    <button id="btn-pen" class="tb-btn" data-i18n-title="penTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5h18"/><path d="M3.5 14.5c2-3 4-3 6 0s4 3 6 0 4-3 6 0"/></svg></button>
+    <button id="btn-note" class="tb-btn" data-i18n-title="noteTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M14 4.5V9h5.5"/><path d="M8.5 12.5h7"/><path d="M8.5 15.5h5"/></svg></button>
+    <button id="btn-erase" class="tb-btn" data-i18n-title="eraseTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.2" y="8.4" width="12.5" height="7.2" rx="1.2" transform="rotate(-35 10.5 12)"/><path d="M21 20.5H9"/></svg></button>
     <span class="tb-sep"></span>
     <select id="lang-sel" class="tb-btn" data-i18n-title="langTitle">
       <option value="zh-CN">简体中文</option>
@@ -68,6 +68,7 @@
 </div>
 
 <div id="note-pop" hidden></div>
+<div id="tip" hidden></div>
 
 <input type="file" id="file-input" accept="application/pdf,.pdf" hidden>
 

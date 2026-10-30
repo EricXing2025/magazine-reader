@@ -41,7 +41,7 @@ const STR = {
     dropHint: '把 PDF 拖到这里，或点左上角「打开」',
     shelfHint: '也可以从左侧书架选择',
     zoomHint: '滚轮缩放 · 拖拽平移 · Esc / 双击关闭',
-    hlTitle: '高亮块 (1)', penTitle: '划线笔 (2)', noteTitle: '添加笔记 (3)', eraseTitle: '擦除批注 (4)',
+    hlTitle: '高亮标记 (1)', penTitle: '波浪下划线 (2)', noteTitle: '添加笔记 (3)', eraseTitle: '擦除批注 (4)',
     annots: '批注', noAnnots: '还没有笔记', pageNo: '第{n}页',
     notePh: '写点什么…', delete: '删除', ok: '完成',
     title: 'MagReader · 杂志阅读器',
@@ -55,7 +55,7 @@ const STR = {
     dropHint: '將 PDF 拖曳至此，或點左上角「開啟」',
     shelfHint: '也可以從左側書架選擇',
     zoomHint: '滾輪縮放 · 拖曳平移 · Esc / 雙擊關閉',
-    hlTitle: '高亮區塊 (1)', penTitle: '畫線筆 (2)', noteTitle: '新增筆記 (3)', eraseTitle: '清除註解 (4)',
+    hlTitle: '高亮標記 (1)', penTitle: '波浪底線 (2)', noteTitle: '新增筆記 (3)', eraseTitle: '清除註解 (4)',
     annots: '註解', noAnnots: '尚無筆記', pageNo: '第{n}頁',
     notePh: '寫點什麼…', delete: '刪除', ok: '完成',
     title: 'MagReader · 雜誌閱讀器',
@@ -69,7 +69,7 @@ const STR = {
     dropHint: 'Drop a PDF here, or click "Open" at top-left',
     shelfHint: 'or pick one from the shelf on the left',
     zoomHint: 'Scroll to zoom · Drag to pan · Esc / double-click to close',
-    hlTitle: 'Highlight (1)', penTitle: 'Pen / underline (2)', noteTitle: 'Add note (3)', eraseTitle: 'Eraser (4)',
+    hlTitle: 'Highlight (1)', penTitle: 'Wavy underline (2)', noteTitle: 'Add note (3)', eraseTitle: 'Eraser (4)',
     annots: 'Notes', noAnnots: 'No notes yet', pageNo: 'p.{n}',
     notePh: 'Write a note…', delete: 'Delete', ok: 'Done',
     title: 'MagReader · Magazine Reader',
@@ -516,19 +516,31 @@ flipRoot.addEventListener('pointerdown', e => {
     return;
   }
   if (ANN.tool === 'pen') {
-    const it = { id: annSeq++, type: 'pen', page, pts: [[nx(e), ny(e)]], color: ANN.color };
+    // 波浪下划线：拖动取水平范围，松手生成规整正弦波（不按手绘轨迹）
+    const x0 = nx(e), y0 = ny(e);
+    const it = { id: annSeq++, type: 'pen', page, pts: [], color: ANN.color };
     ANN.items.push(it);
     const path = document.createElementNS(ANN_NS, 'path');
     path.setAttribute('fill', 'none'); path.setAttribute('stroke', it.color);
-    path.setAttribute('stroke-width', 3);
+    path.setAttribute('stroke-width', 2.5);
     path.setAttribute('vector-effect', 'non-scaling-stroke');
     path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
     path.classList.add('ann'); path.dataset.annId = it.id;
     svg.appendChild(path);
-    const move = ev => { it.pts.push([nx(ev), ny(ev)]); path.setAttribute('d', penD(it.pts)); };
+    const update = x1 => {
+      const a = Math.min(x0, x1), b = Math.max(x0, x1);
+      it.pts = wavePts(a, b, y0);
+      path.setAttribute('d', penD(it.pts));
+    };
+    update(x0);
+    const move = ev => update(nx(ev));
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      if (it.pts.length && (it.pts[it.pts.length - 1][0] - it.pts[0][0]) < 0.008) {
+        ANN.items = ANN.items.filter(a => a.id !== it.id);   // 太短的误触丢弃
+        drawPageAnnots(page);
+      }
       saveAnnots();
     };
     window.addEventListener('pointermove', move);
@@ -536,24 +548,28 @@ flipRoot.addEventListener('pointerdown', e => {
     return;
   }
   if (ANN.tool === 'hl') {
-    const x0 = nx(e), y0 = ny(e);
-    const it = { id: annSeq++, type: 'rect', page, x: x0, y: y0, w: 0, h: 0, color: ANN.color };
+    // 荧光笔刷：固定行高色带，以起点行为准随拖动横向延展
+    const HL_H = 0.026;
+    const x0 = nx(e);
+    const y0 = Math.min(1 - HL_H, Math.max(0, ny(e) - HL_H / 2));
+    const it = { id: annSeq++, type: 'rect', page, x: x0, y: y0, w: 0, h: HL_H, color: ANN.color };
     ANN.items.push(it);
     const rect = document.createElementNS(ANN_NS, 'rect');
     rect.setAttribute('fill', it.color); rect.setAttribute('fill-opacity', .35);
+    rect.setAttribute('rx', HL_H / 2); rect.setAttribute('ry', 0.004);
     rect.classList.add('ann', 'hl-rect'); rect.dataset.annId = it.id;
     svg.appendChild(rect);
     const move = ev => {
-      const x1 = nx(ev), y1 = ny(ev);
-      it.x = Math.min(x0, x1); it.y = Math.min(y0, y1);
-      it.w = Math.abs(x1 - x0); it.h = Math.abs(y1 - y0);
+      const x1 = nx(ev);
+      it.x = Math.min(x0, x1); it.w = Math.abs(x1 - x0);
       rect.setAttribute('x', it.x); rect.setAttribute('y', it.y);
       rect.setAttribute('width', it.w); rect.setAttribute('height', it.h);
     };
+    move(e);
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      if (it.w < 0.004 && it.h < 0.004) {   // 误触的小框丢弃
+      if (it.w < 0.006) {   // 误触的小条丢弃
         ANN.items = ANN.items.filter(a => a.id !== it.id);
         drawPageAnnots(page);
       }
@@ -563,6 +579,42 @@ flipRoot.addEventListener('pointerdown', e => {
     window.addEventListener('pointerup', up);
   }
 }, true);
+
+// 正弦波浪点列：a→b 归一化横坐标，y 为中心线
+function wavePts(a, b, y) {
+  const amp = 0.0055, wl = 0.016;
+  const n = Math.max(6, Math.round((b - a) / (wl / 6)));
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const x = a + (b - a) * i / n;
+    pts.push([x, y + amp * Math.sin(2 * Math.PI * (x - a) / wl)]);
+  }
+  return pts;
+}
+
+// 按钮悬停提示（替代原生 title，显示快、配色跟随主题）
+const tipEl = $('#tip');
+let tipFor = null;
+document.addEventListener('mouseover', e => {
+  const b = e.target.closest && e.target.closest('.tb-btn');
+  if (!b || !b.title || b === tipFor) return;
+  b.dataset.tipText = b.title;
+  b.removeAttribute('title');          // 抑制原生 tooltip
+  const r = b.getBoundingClientRect();
+  tipEl.textContent = b.dataset.tipText;
+  tipEl.style.left = Math.min(Math.max(70, r.left + r.width / 2), innerWidth - 70) + 'px';
+  tipEl.style.top = (r.bottom + 6) + 'px';
+  tipEl.hidden = false;
+  tipFor = b;
+});
+document.addEventListener('mouseout', e => {
+  if (!tipFor) return;
+  const b = e.target.closest && e.target.closest('.tb-btn');
+  if (b !== tipFor) return;
+  tipFor.title = tipFor.dataset.tipText;
+  tipFor = null;
+  tipEl.hidden = true;
+});
 
 function renderAnnotList() {
   const notes = ANN.items.filter(a => a.type === 'note');
