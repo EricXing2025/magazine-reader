@@ -43,7 +43,7 @@ const STR = {
     zoomHint: '滚轮缩放 · 拖拽平移 · Esc / 双击关闭',
     hlTitle: '高亮标记 (1)', penTitle: '波浪下划线 (2)', noteTitle: '添加笔记 (3)', eraseTitle: '擦除批注 (4)',
     annots: '批注', noAnnots: '还没有笔记', pageNo: '第{n}页',
-    recent: '最近打开', openLocal: '打开本地 PDF',
+    recent: '最近打开', openLocal: '打开本地 PDF', homeTitle: '返回书架',
     delShelfTitle: '删除该文件', delRecentTitle: '从最近记录移除',
     confirmDel: '确定删除"{n}"吗？books/ 里的文件也会被删掉。',
     notePh: '写点什么…', delete: '删除', ok: '完成',
@@ -60,7 +60,7 @@ const STR = {
     zoomHint: '滾輪縮放 · 拖曳平移 · Esc / 雙擊關閉',
     hlTitle: '高亮標記 (1)', penTitle: '波浪底線 (2)', noteTitle: '新增筆記 (3)', eraseTitle: '清除註解 (4)',
     annots: '註解', noAnnots: '尚無筆記', pageNo: '第{n}頁',
-    recent: '最近開啟', openLocal: '開啟本機 PDF',
+    recent: '最近開啟', openLocal: '開啟本機 PDF', homeTitle: '返回書架',
     delShelfTitle: '刪除該檔案', delRecentTitle: '從最近記錄移除',
     confirmDel: '確定刪除「{n}」嗎？books/ 裡的檔案也會被刪除。',
     notePh: '寫點什麼…', delete: '刪除', ok: '完成',
@@ -77,7 +77,7 @@ const STR = {
     zoomHint: 'Scroll to zoom · Drag to pan · Esc / double-click to close',
     hlTitle: 'Highlight (1)', penTitle: 'Wavy underline (2)', noteTitle: 'Add note (3)', eraseTitle: 'Eraser (4)',
     annots: 'Notes', noAnnots: 'No notes yet', pageNo: 'p.{n}',
-    recent: 'Recent', openLocal: 'Open a local PDF',
+    recent: 'Recent', openLocal: 'Open a local PDF', homeTitle: 'Back to shelf',
     delShelfTitle: 'Delete this file', delRecentTitle: 'Remove from recent',
     confirmDel: 'Delete "{n}"? The file in books/ will be removed.',
     notePh: 'Write a note…', delete: 'Delete', ok: 'Done',
@@ -292,6 +292,34 @@ async function openData(buf, key, name, opts = {}) {
     addRecent(key, name, buf.byteLength);
     if (opts.blob) idb.put(key, opts.blob).catch(() => {});
   }
+}
+
+//  zurück zum Bücherregal: Dokument schließen, Bühne leeren, Regal zeigen
+function closeDoc() {
+  if (!S.doc) {
+    homeEl.hidden = false;
+    return;
+  }
+  savePos(); persistAnnots();
+  setAnnotTool(null);
+  closeNotePop();
+  if (S.flip) { try { S.flip.destroy(); } catch {} S.flip = null; }
+  try { S.doc.destroy(); } catch {}
+  flipRoot.innerHTML = '';
+  bookEl = document.createElement('div');
+  bookEl.id = 'book';
+  flipRoot.appendChild(bookEl);
+  S.doc = null; S.key = null; S.numPages = 0; S.pageDivs = [];
+  S.rendered.clear();
+  thumbIO?.disconnect();
+  thumbsEl.innerHTML = '';
+  ANN.items = [];
+  renderAnnotList();
+  textCache.clear();
+  docName.textContent = t('noDoc');
+  pageInfo.textContent = '';
+  renderShelfItems(); renderRecent(); renderHome();
+  homeEl.hidden = false;
 }
 
 /* ================= 缩略图 ================= */
@@ -757,6 +785,8 @@ $('#btn-rtl').addEventListener('click', () => S.flip && toggleRtl());
 $('#btn-full').addEventListener('click', () =>
   document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen());
 $('#btn-open').addEventListener('click', () => $('#file-input').click());
+$('#btn-home').addEventListener('click', closeDoc);
+
 $('#file-input').addEventListener('change', async e => {
   const f = e.target.files[0];
   e.target.value = '';
