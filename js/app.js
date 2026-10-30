@@ -44,6 +44,12 @@ const STR = {
     hlTitle: '高亮标记 (1)', penTitle: '波浪下划线 (2)', noteTitle: '添加笔记 (3)', eraseTitle: '擦除批注 (4)',
     annots: '批注', noAnnots: '还没有笔记', pageNo: '第{n}页',
     recent: '最近打开', openLocal: '打开本地 PDF', homeTitle: '返回书架',
+    aiTitle: 'AI 总结', aiSetTitle: '接口设置', aiModel: '模型',
+    aiKeyHint: '密钥只保存在本机浏览器，不会上传或提交',
+    aiSave: '保存设置', aiGen: '生成总结', aiBusy: '正在提取文本并生成…',
+    aiNeedDoc: '先打开一本杂志再总结', aiNeedKey: '请先填写 API Key',
+    aiEmpty: '这份 PDF 提取不到文字', aiErr: '请求失败：',
+    aiOutPh: '点「生成总结」对当前文档做 AI 摘要', aiSaved: '已保存',
     delShelfTitle: '删除该文件', delRecentTitle: '从最近记录移除',
     confirmDel: '确定删除"{n}"吗？books/ 里的文件也会被删掉。',
     notePh: '写点什么…', delete: '删除', ok: '完成',
@@ -61,6 +67,12 @@ const STR = {
     hlTitle: '高亮標記 (1)', penTitle: '波浪底線 (2)', noteTitle: '新增筆記 (3)', eraseTitle: '清除註解 (4)',
     annots: '註解', noAnnots: '尚無筆記', pageNo: '第{n}頁',
     recent: '最近開啟', openLocal: '開啟本機 PDF', homeTitle: '返回書架',
+    aiTitle: 'AI 總結', aiSetTitle: '接口設定', aiModel: '模型',
+    aiKeyHint: '密鑰只保存在本機瀏覽器，不會上傳或提交',
+    aiSave: '保存設定', aiGen: '生成總結', aiBusy: '正在擷取文字並生成…',
+    aiNeedDoc: '先開啟一本雜誌再總結', aiNeedKey: '請先填寫 API Key',
+    aiEmpty: '這份 PDF 擷取不到文字', aiErr: '請求失敗：',
+    aiOutPh: '點「生成總結」對當前文檔做 AI 摘要', aiSaved: '已保存',
     delShelfTitle: '刪除該檔案', delRecentTitle: '從最近記錄移除',
     confirmDel: '確定刪除「{n}」嗎？books/ 裡的檔案也會被刪除。',
     notePh: '寫點什麼…', delete: '刪除', ok: '完成',
@@ -78,6 +90,12 @@ const STR = {
     hlTitle: 'Highlight (1)', penTitle: 'Wavy underline (2)', noteTitle: 'Add note (3)', eraseTitle: 'Eraser (4)',
     annots: 'Notes', noAnnots: 'No notes yet', pageNo: 'p.{n}',
     recent: 'Recent', openLocal: 'Open a local PDF', homeTitle: 'Back to shelf',
+    aiTitle: 'AI Summary', aiSetTitle: 'API settings', aiModel: 'Model',
+    aiKeyHint: 'The key stays in this browser only — never uploaded or committed',
+    aiSave: 'Save settings', aiGen: 'Summarize', aiBusy: 'Extracting text & summarizing…',
+    aiNeedDoc: 'Open a PDF first', aiNeedKey: 'Set your API key first',
+    aiEmpty: 'No extractable text in this PDF', aiErr: 'Request failed: ',
+    aiOutPh: 'Click Summarize for an AI summary of the open document', aiSaved: 'Saved',
     delShelfTitle: 'Delete this file', delRecentTitle: 'Remove from recent',
     confirmDel: 'Delete "{n}"? The file in books/ will be removed.',
     notePh: 'Write a note…', delete: 'Delete', ok: 'Done',
@@ -522,24 +540,54 @@ document.addEventListener('pointerdown', e => {
   if (!notePop.hidden && !e.target.closest('#note-pop') && !e.target.closest('.note-pin')) closeNotePop();
 }, true);
 
+// 橡皮擦用距离命中，比 DOM 描边命中宽容得多
+function nearestAnn(page, x, y, tol) {
+  let best = null, bd = tol;
+  for (const a of ANN.items) {
+    if (a.page !== page) continue;
+    let d = Infinity;
+    if (a.type === 'rect') {
+      const dx = x < a.x ? a.x - x : x > a.x + a.w ? x - (a.x + a.w) : 0;
+      const dy = y < a.y ? a.y - y : y > a.y + a.h ? y - (a.y + a.h) : 0;
+      d = Math.hypot(dx, dy);
+    } else if (a.type === 'pen') {
+      for (const p of a.pts) d = Math.min(d, Math.hypot(p[0] - x, p[1] - y));
+    } else if (a.type === 'note') {
+      d = Math.hypot(a.x - x, a.y - y);
+    }
+    if (d < bd) { bd = d; best = a; }
+  }
+  return best;
+}
+
 // 绘图事件（capture 阶段拦截，避免与翻页手势冲突）
 flipRoot.addEventListener('pointerdown', e => {
   const pin = e.target.closest && e.target.closest('.note-pin');
+  if (!ANN.tool || !S.doc) {
+    if (pin) {   // 无工具时钉子是打开笔记用的
+      e.preventDefault(); e.stopPropagation();
+      openNotePop(+pin.dataset.annId, pin.getBoundingClientRect());
+    }
+    return;
+  }
+  if (ANN.tool === 'erase') {
+    // 始终消费事件：空点也不能漏给 PageFlip 翻页
+    e.preventDefault(); e.stopPropagation();
+    const host = (pin || e.target).closest && (pin || e.target).closest('.page');
+    if (!host) return;
+    const svg = host.querySelector('.annot-svg');
+    const r = svg.getBoundingClientRect();
+    const page = +host.dataset.idx;
+    const it = nearestAnn(page, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, 0.028);
+    if (it) {
+      ANN.items = ANN.items.filter(a => a.id !== it.id);
+      drawPageAnnots(page); saveAnnots(); renderAnnotList();
+    }
+    return;
+  }
   if (pin) {
     e.preventDefault(); e.stopPropagation();
     openNotePop(+pin.dataset.annId, pin.getBoundingClientRect());
-    return;
-  }
-  if (!ANN.tool || !S.doc) return;
-  if (ANN.tool === 'erase') {
-    const hit = e.target.closest && e.target.closest('.ann, .note-pin');
-    if (hit) {
-      e.preventDefault(); e.stopPropagation();
-      const id = +hit.dataset.annId;
-      const host = hit.closest('.page');
-      ANN.items = ANN.items.filter(a => a.id !== id);
-      drawPageAnnots(+host.dataset.idx); saveAnnots(); renderAnnotList();
-    }
     return;
   }
   const svg = e.target.closest && e.target.closest('.annot-svg');
@@ -632,6 +680,13 @@ flipRoot.addEventListener('pointerdown', e => {
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+  }
+}, true);
+
+// 批注工具激活时，页面上的 click 事件也不许漏给翻页库
+flipRoot.addEventListener('click', e => {
+  if (ANN.tool && e.target.closest && e.target.closest('.page')) {
+    e.preventDefault(); e.stopPropagation();
   }
 }, true);
 
@@ -967,12 +1022,27 @@ function delShelfBook(b) {
   });
 }
 
+function getShelfOrder() {
+  try { return JSON.parse(localStorage.getItem(LS_PREFIX + 'shelfOrder')) || []; } catch { return []; }
+}
+function saveShelfOrder() {
+  try { localStorage.setItem(LS_PREFIX + 'shelfOrder', JSON.stringify((S.shelfBooks || []).map(b => b.name))); } catch {}
+}
+function sortShelfBooks(books) {
+  const ord = getShelfOrder();
+  return books.slice().sort((a, b) => {
+    const ia = ord.indexOf(a.name), ib = ord.indexOf(b.name);
+    return (ia < 0 ? ord.length : ia) - (ib < 0 ? ord.length : ib);
+  });
+}
+
 function renderShelfItems() {
   const shelf = $('#shelf');
   shelf.innerHTML = '';
   for (const b of (S.shelfBooks || [])) {
     const row = document.createElement('div');
     row.className = 'shelf-row';
+    row.draggable = true;
     const btn = document.createElement('button');
     btn.className = 'shelf-item' + (S.key === 'lib:' + b.name ? ' cur' : '');
     btn.textContent = b.name.replace(/\.pdf$/i, '');
@@ -985,6 +1055,36 @@ function renderShelfItems() {
     const d = document.createElement('button');
     d.className = 'shelf-del'; d.textContent = '×'; d.title = t('delShelfTitle');
     d.addEventListener('click', ev => { ev.stopPropagation(); delShelfBook(b); });
+    // 拖拽排序
+    row.addEventListener('dragstart', ev => {
+      ev.dataTransfer.setData('text/plain', b.name);
+      ev.dataTransfer.effectAllowed = 'move';
+      row.classList.add('drag');
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('drag');
+      shelf.querySelectorAll('.shelf-row.over').forEach(x => x.classList.remove('over'));
+    });
+    row.addEventListener('dragover', ev => {
+      if (!shelf.querySelector('.shelf-row.drag')) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      const mid = row.getBoundingClientRect().top + row.offsetHeight / 2;
+      row.classList.toggle('over', true);
+      row.dataset.after = ev.clientY > mid ? '1' : '';
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('over'));
+    row.addEventListener('drop', ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      const name = ev.dataTransfer.getData('text/plain');
+      const from = S.shelfBooks.findIndex(x => x.name === name);
+      if (from < 0 || S.shelfBooks[from] === b) return;
+      const obj = S.shelfBooks[from];
+      S.shelfBooks.splice(from, 1);
+      S.shelfBooks.splice(S.shelfBooks.indexOf(b) + (row.dataset.after ? 1 : 0), 0, obj);
+      saveShelfOrder();
+      renderShelfItems(); renderHome();
+    });
     row.append(btn, d);
     shelf.appendChild(row);
   }
@@ -997,7 +1097,7 @@ async function loadShelf() {
     if (!r.ok) return;
     books = await r.json();
   } catch { return; }
-  S.shelfBooks = books;
+  S.shelfBooks = sortShelfBooks(books);
   $('#shelf-box').hidden = !books.length;
   renderShelfItems();
   renderHome();
@@ -1008,6 +1108,80 @@ async function loadShelf() {
     if (b) openData(await (await fetch(b.url)).arrayBuffer(), 'lib:' + b.name, b.name);
   }
 }
+
+/* ================= AI 总结（OpenAI 兼容接口） ================= */
+const aiModal = $('#ai-modal'), aiForm = $('#ai-form'), aiOut = $('#ai-out');
+const AI_DEF = { base: 'https://api.openai.com/v1', model: 'gpt-4o-mini' };
+function aiCfg() {
+  try { return { ...AI_DEF, ...(JSON.parse(localStorage.getItem(LS_PREFIX + 'aicfg')) || {}) }; }
+  catch { return { ...AI_DEF }; }
+}
+
+$('#btn-ai').addEventListener('click', () => {
+  const c = aiCfg();
+  $('#ai-base').value = c.base; $('#ai-key').value = c.key || ''; $('#ai-model').value = c.model;
+  aiForm.hidden = !!c.key;
+  aiOut.textContent = '';
+  aiOut.dataset.ph = t('aiOutPh');
+  aiModal.hidden = false;
+});
+$('#ai-x').addEventListener('click', () => aiModal.hidden = true);
+aiModal.addEventListener('click', e => { if (e.target === aiModal) aiModal.hidden = true; });
+$('#ai-set-btn').addEventListener('click', () => aiForm.hidden = !aiForm.hidden);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !aiModal.hidden) { aiModal.hidden = true; e.stopPropagation(); }
+}, true);
+$('#ai-save').addEventListener('click', () => {
+  localStorage.setItem(LS_PREFIX + 'aicfg', JSON.stringify({
+    base: $('#ai-base').value.trim() || AI_DEF.base,
+    key: $('#ai-key').value.trim(),
+    model: $('#ai-model').value.trim() || AI_DEF.model,
+  }));
+  aiForm.hidden = true;
+  aiOut.textContent = t('aiSaved');
+});
+
+async function extractDocText(cap = 50000) {
+  const parts = [];
+  let len = 0;
+  for (let i = 1; i <= S.numPages; i++) {
+    const tc = await (await S.doc.getPage(i)).getTextContent();
+    const s = tc.items.map(x => x.str).join(' ');
+    parts.push(s); len += s.length;
+    if (len > cap) break;
+  }
+  return parts.join('\n').slice(0, cap);
+}
+
+$('#ai-gen').addEventListener('click', async () => {
+  const c = aiCfg();
+  if (!S.doc) { aiOut.textContent = t('aiNeedDoc'); return; }
+  if (!c.key) { aiForm.hidden = false; aiOut.textContent = t('aiNeedKey'); return; }
+  const btn = $('#ai-gen');
+  btn.disabled = true;
+  aiOut.textContent = t('aiBusy');
+  try {
+    const text = await extractDocText();
+    if (!text.trim()) { aiOut.textContent = t('aiEmpty'); return; }
+    const langName = UI.lang === 'en' ? 'English' : UI.lang === 'zh-TW' ? '繁體中文' : '简体中文';
+    const r = await fetch(c.base.replace(/\/+$/, '') + '/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + c.key },
+      body: JSON.stringify({
+        model: c.model, temperature: 0.3,
+        messages: [{ role: 'user', content:
+          `请用${langName}分条总结这份文档的核心内容与要点，200-400字：\n\n${text}` }],
+      }),
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + r.status));
+    aiOut.textContent = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || t('aiEmpty');
+  } catch (err) {
+    aiOut.textContent = t('aiErr') + (err && err.message || err);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 loadUiPref();
 $('#lang-sel').value = UI.lang;

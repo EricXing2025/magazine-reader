@@ -28,6 +28,7 @@
     <button id="btn-note" class="tb-btn" data-i18n-title="noteTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5H6A1.5 1.5 0 0 0 4.5 6v12A1.5 1.5 0 0 0 6 19.5h12a1.5 1.5 0 0 0 1.5-1.5V9z"/><path d="M14 4.5V9h5.5"/><path d="M8.5 12.5h7"/><path d="M8.5 15.5h5"/></svg></button>
     <button id="btn-erase" class="tb-btn" data-i18n-title="eraseTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.2" y="8.4" width="12.5" height="7.2" rx="1.2" transform="rotate(-35 10.5 12)"/><path d="M21 20.5H9"/></svg></button>
     <span class="tb-sep"></span>
+    <button id="btn-ai" class="tb-btn" data-i18n-title="aiTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 13.7 8l4.5 1.7-4.5 1.7L12 16l-1.7-4.6-4.5-1.7L10.3 8z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg></button>
     <select id="lang-sel" class="tb-btn" data-i18n-title="langTitle">
       <option value="zh-CN">简体中文</option>
       <option value="zh-TW">繁體中文</option>
@@ -71,6 +72,28 @@
 </div>
 
 <div id="note-pop" hidden></div>
+
+<div id="ai-modal" hidden>
+  <div id="ai-panel">
+    <div id="ai-head">
+      <span data-i18n="aiTitle">AI 总结</span>
+      <button id="ai-set-btn" class="tb-btn" data-i18n-title="aiSetTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M2.5 12h3M18.5 12h3M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"/></svg></button>
+      <button id="ai-x" class="tb-btn">×</button>
+    </div>
+    <div id="ai-form" hidden>
+      <label>Base URL<input id="ai-base" type="text" placeholder="https://api.openai.com/v1" spellcheck="false"></label>
+      <label>API Key<input id="ai-key" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
+        <div class="ai-hint" data-i18n="aiKeyHint">密钥只保存在本机浏览器，不会上传或提交</div></label>
+      <label><span data-i18n="aiModel">模型</span><input id="ai-model" type="text" placeholder="gpt-4o-mini" spellcheck="false"></label>
+      <button id="ai-save" class="tb-btn" data-i18n="aiSave">保存设置</button>
+    </div>
+    <div id="ai-out"></div>
+    <div id="ai-foot">
+      <button id="ai-gen" class="tb-btn" data-i18n="aiGen">生成总结</button>
+    </div>
+  </div>
+</div>
+
 <div id="tip" hidden></div>
 
 <input type="file" id="file-input" accept="application/pdf,.pdf" hidden>
