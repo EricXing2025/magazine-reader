@@ -41,6 +41,9 @@ const STR = {
     dropHint: '把 PDF 拖到这里，或点左上角「打开」',
     shelfHint: '也可以从左侧书架选择',
     zoomHint: '滚轮缩放 · 拖拽平移 · Esc / 双击关闭',
+    hlTitle: '高亮块 (1)', penTitle: '划线笔 (2)', noteTitle: '添加笔记 (3)', eraseTitle: '擦除批注 (4)',
+    annots: '批注', noAnnots: '还没有笔记', pageNo: '第{n}页',
+    notePh: '写点什么…', delete: '删除', ok: '完成',
     title: 'MagReader · 杂志阅读器',
   },
   'zh-TW': {
@@ -52,6 +55,9 @@ const STR = {
     dropHint: '將 PDF 拖曳至此，或點左上角「開啟」',
     shelfHint: '也可以從左側書架選擇',
     zoomHint: '滾輪縮放 · 拖曳平移 · Esc / 雙擊關閉',
+    hlTitle: '高亮區塊 (1)', penTitle: '畫線筆 (2)', noteTitle: '新增筆記 (3)', eraseTitle: '清除註解 (4)',
+    annots: '註解', noAnnots: '尚無筆記', pageNo: '第{n}頁',
+    notePh: '寫點什麼…', delete: '刪除', ok: '完成',
     title: 'MagReader · 雜誌閱讀器',
   },
   en: {
@@ -63,6 +69,9 @@ const STR = {
     dropHint: 'Drop a PDF here, or click "Open" at top-left',
     shelfHint: 'or pick one from the shelf on the left',
     zoomHint: 'Scroll to zoom · Drag to pan · Esc / double-click to close',
+    hlTitle: 'Highlight (1)', penTitle: 'Pen / underline (2)', noteTitle: 'Add note (3)', eraseTitle: 'Eraser (4)',
+    annots: 'Notes', noAnnots: 'No notes yet', pageNo: 'p.{n}',
+    notePh: 'Write a note…', delete: 'Delete', ok: 'Done',
     title: 'MagReader · Magazine Reader',
   },
 };
@@ -158,6 +167,14 @@ function buildPageDivs() {
     ph.className = 'ph';
     ph.textContent = i + 1;
     inner.appendChild(ph);
+    const asvg = document.createElementNS(ANN_NS, 'svg');
+    asvg.setAttribute('class', 'annot-svg');
+    asvg.setAttribute('viewBox', '0 0 1 1');
+    asvg.setAttribute('preserveAspectRatio', 'none');
+    inner.appendChild(asvg);
+    const pins = document.createElement('div');
+    pins.className = 'ann-pins';
+    inner.appendChild(pins);
     d.appendChild(inner);
     S.pageDivs.push(d);
   }
@@ -254,6 +271,10 @@ async function openData(buf, key, name) {
   setRtl(saved ? !!saved.rtl : false);
   initFlip(saved ? Math.min(saved.idx, S.numPages - 1) : 0);
   buildThumbs();
+  loadAnnots();
+  drawAllAnnots();
+  renderAnnotList();
+  setAnnotTool(null);
   onPageChanged();
   dropHint.classList.add('gone');
 }
@@ -276,15 +297,7 @@ function buildThumbs() {
     t.className = 'thumb';
     t.dataset.idx = i;
     t.innerHTML = `<span class="t-no">${i + 1}</span>`;
-    t.addEventListener('click', () => {
-      // 跳到该页所在对开：LTR 偶数页(非0)在右→退一格；RTL 奇数页在左→退一格
-      let target = i;
-      if (S.flip.getOrientation() === 'landscape') {
-        if (!S.rtl && i > 0 && i % 2 === 0) target = i - 1;
-        if (S.rtl && i % 2 === 1) target = i - 1;
-      }
-      S.flip.flip(target);
-    });
+    t.addEventListener('click', () => jumpToPage(i));
     thumbsEl.appendChild(t);
     thumbIO.observe(t);
   }
@@ -362,14 +375,246 @@ const zoom = (() => {
   return { open, close, isOpen: () => !ov.hidden };
 })();
 
+/* ================= 批注（高亮 / 划线 / 笔记 / 擦除） ================= */
+const ANN_NS = 'http://www.w3.org/2000/svg';
+const annotsEl = $('#annots'), notePop = $('#note-pop');
+const ANN = { tool: null, items: [], color: '#ffd24d' };
+let annSeq = 1, annTimer = null, popId = null;
+const escapeHtml = s => s.replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function loadAnnots() {
+  try { ANN.items = (JSON.parse(localStorage.getItem(LS_PREFIX + 'ann:' + S.key)) || {}).items || []; }
+  catch { ANN.items = []; }
+  annSeq = ANN.items.reduce((m, a) => Math.max(m, a.id || 0), 0) + 1;
+}
+function persistAnnots() {
+  clearTimeout(annTimer);
+  try { localStorage.setItem(LS_PREFIX + 'ann:' + S.key, JSON.stringify({ items: ANN.items })); } catch {}
+}
+function saveAnnots() {
+  clearTimeout(annTimer);
+  annTimer = setTimeout(persistAnnots, 400);
+}
+
+function penD(pts) {
+  return pts.map((q, j) => (j ? 'L' : 'M') + q[0].toFixed(4) + ' ' + q[1].toFixed(4)).join(' ');
+}
+
+function drawPageAnnots(i) {
+  const host = S.pageDivs[i]; if (!host) return;
+  const svg = host.querySelector('.annot-svg'), pins = host.querySelector('.ann-pins');
+  svg.replaceChildren(); pins.replaceChildren();
+  const noteIdx = id => ANN.items.filter(a => a.type === 'note').findIndex(a => a.id === id) + 1;
+  for (const a of ANN.items.filter(a => a.page === i)) {
+    if (a.type === 'note') {
+      const p = document.createElement('div');
+      p.className = 'note-pin';
+      p.dataset.annId = a.id;
+      p.style.left = a.x * 100 + '%';
+      p.style.top = a.y * 100 + '%';
+      p.innerHTML = `<span>${noteIdx(a.id)}</span>`;
+      pins.appendChild(p);
+    } else if (a.type === 'rect') {
+      const r = document.createElementNS(ANN_NS, 'rect');
+      r.setAttribute('x', a.x); r.setAttribute('y', a.y);
+      r.setAttribute('width', a.w); r.setAttribute('height', a.h);
+      r.setAttribute('fill', a.color); r.setAttribute('fill-opacity', .35);
+      r.classList.add('ann', 'hl-rect');
+      r.dataset.annId = a.id;
+      svg.appendChild(r);
+    } else if (a.type === 'pen') {
+      const p = document.createElementNS(ANN_NS, 'path');
+      p.setAttribute('d', penD(a.pts));
+      p.setAttribute('fill', 'none'); p.setAttribute('stroke', a.color);
+      p.setAttribute('stroke-width', 3);
+      p.setAttribute('vector-effect', 'non-scaling-stroke');
+      p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round');
+      p.classList.add('ann');
+      p.dataset.annId = a.id;
+      svg.appendChild(p);
+    }
+  }
+}
+function drawAllAnnots() { for (let i = 0; i < S.numPages; i++) drawPageAnnots(i); }
+
+function setAnnotTool(tool) {
+  ANN.tool = tool;
+  for (const id of ['hl', 'pen', 'note', 'erase'])
+    $('#btn-' + id).classList.toggle('on', tool === id);
+  $('#annot-pal').hidden = !(tool === 'hl' || tool === 'pen');
+  document.querySelectorAll('.annot-svg').forEach(svg => {
+    svg.classList.toggle('active', tool === 'hl' || tool === 'pen' || tool === 'note');
+    svg.classList.toggle('erase', tool === 'erase');
+  });
+}
+
+function openNotePop(id, rect) {
+  const a = ANN.items.find(x => x.id === id); if (!a) return;
+  popId = id;
+  notePop.innerHTML = `<textarea placeholder="${t('notePh')}">${escapeHtml(a.text || '')}</textarea>
+    <div class="np-row"><button class="np-del">${t('delete')}</button><button class="np-ok">${t('ok')}</button></div>`;
+  const W = 250;
+  const x = Math.min(Math.max(8, rect.left + rect.width / 2 - W / 2), innerWidth - W - 8);
+  let y = rect.bottom + 8;
+  if (y + 170 > innerHeight) y = Math.max(8, rect.top - 178);
+  notePop.style.left = x + 'px'; notePop.style.top = y + 'px';
+  notePop.hidden = false;
+  const ta = notePop.querySelector('textarea');
+  ta.focus();
+  ta.addEventListener('input', () => { a.text = ta.value; saveAnnots(); });
+  notePop.querySelector('.np-del').addEventListener('click', () => {
+    ANN.items = ANN.items.filter(x => x.id !== id);
+    drawPageAnnots(a.page); persistAnnots(); renderAnnotList(); closeNotePop();
+  });
+  notePop.querySelector('.np-ok').addEventListener('click', () => {
+    persistAnnots(); renderAnnotList(); closeNotePop();
+  });
+}
+function closeNotePop() {
+  notePop.hidden = true; popId = null;
+  if (document.activeElement) document.activeElement.blur();
+}
+document.addEventListener('pointerdown', e => {
+  if (!notePop.hidden && !e.target.closest('#note-pop') && !e.target.closest('.note-pin')) closeNotePop();
+}, true);
+
+// 绘图事件（capture 阶段拦截，避免与翻页手势冲突）
+flipRoot.addEventListener('pointerdown', e => {
+  const pin = e.target.closest && e.target.closest('.note-pin');
+  if (pin) {
+    e.preventDefault(); e.stopPropagation();
+    openNotePop(+pin.dataset.annId, pin.getBoundingClientRect());
+    return;
+  }
+  if (!ANN.tool || !S.doc) return;
+  if (ANN.tool === 'erase') {
+    const hit = e.target.closest && e.target.closest('.ann, .note-pin');
+    if (hit) {
+      e.preventDefault(); e.stopPropagation();
+      const id = +hit.dataset.annId;
+      const host = hit.closest('.page');
+      ANN.items = ANN.items.filter(a => a.id !== id);
+      drawPageAnnots(+host.dataset.idx); saveAnnots(); renderAnnotList();
+    }
+    return;
+  }
+  const svg = e.target.closest && e.target.closest('.annot-svg');
+  if (!svg) return;
+  e.preventDefault(); e.stopPropagation();
+  const host = svg.closest('.page'), page = +host.dataset.idx;
+  const r = svg.getBoundingClientRect();
+  const nx = ev => Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+  const ny = ev => Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+
+  if (ANN.tool === 'note') {
+    const it = { id: annSeq++, type: 'note', page, x: nx(e), y: ny(e), text: '' };
+    ANN.items.push(it);
+    drawPageAnnots(page); saveAnnots(); renderAnnotList();
+    const pel = host.querySelector(`.note-pin[data-ann-id="${it.id}"]`);
+    openNotePop(it.id, pel.getBoundingClientRect());
+    return;
+  }
+  if (ANN.tool === 'pen') {
+    const it = { id: annSeq++, type: 'pen', page, pts: [[nx(e), ny(e)]], color: ANN.color };
+    ANN.items.push(it);
+    const path = document.createElementNS(ANN_NS, 'path');
+    path.setAttribute('fill', 'none'); path.setAttribute('stroke', it.color);
+    path.setAttribute('stroke-width', 3);
+    path.setAttribute('vector-effect', 'non-scaling-stroke');
+    path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round');
+    path.classList.add('ann'); path.dataset.annId = it.id;
+    svg.appendChild(path);
+    const move = ev => { it.pts.push([nx(ev), ny(ev)]); path.setAttribute('d', penD(it.pts)); };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      saveAnnots();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return;
+  }
+  if (ANN.tool === 'hl') {
+    const x0 = nx(e), y0 = ny(e);
+    const it = { id: annSeq++, type: 'rect', page, x: x0, y: y0, w: 0, h: 0, color: ANN.color };
+    ANN.items.push(it);
+    const rect = document.createElementNS(ANN_NS, 'rect');
+    rect.setAttribute('fill', it.color); rect.setAttribute('fill-opacity', .35);
+    rect.classList.add('ann', 'hl-rect'); rect.dataset.annId = it.id;
+    svg.appendChild(rect);
+    const move = ev => {
+      const x1 = nx(ev), y1 = ny(ev);
+      it.x = Math.min(x0, x1); it.y = Math.min(y0, y1);
+      it.w = Math.abs(x1 - x0); it.h = Math.abs(y1 - y0);
+      rect.setAttribute('x', it.x); rect.setAttribute('y', it.y);
+      rect.setAttribute('width', it.w); rect.setAttribute('height', it.h);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (it.w < 0.004 && it.h < 0.004) {   // 误触的小框丢弃
+        ANN.items = ANN.items.filter(a => a.id !== it.id);
+        drawPageAnnots(page);
+      }
+      saveAnnots();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+}, true);
+
+function renderAnnotList() {
+  const notes = ANN.items.filter(a => a.type === 'note');
+  annotsEl.innerHTML = notes.length ? '' : `<div class="annot-empty">${t('noAnnots')}</div>`;
+  notes.forEach((a, i) => {
+    const row = document.createElement('div');
+    row.className = 'annot-item';
+    row.innerHTML = `<span class="ai-pin"><i>${i + 1}</i></span>` +
+      `<span class="ai-pg">${t('pageNo').replace('{n}', a.page + 1)}</span>` +
+      `<span class="ai-text">${escapeHtml(a.text || '…')}</span>`;
+    row.addEventListener('click', () => jumpToPage(a.page));
+    annotsEl.appendChild(row);
+  });
+}
+
+$('#btn-hl').addEventListener('click', () => setAnnotTool(ANN.tool === 'hl' ? null : 'hl'));
+$('#btn-pen').addEventListener('click', () => setAnnotTool(ANN.tool === 'pen' ? null : 'pen'));
+$('#btn-note').addEventListener('click', () => setAnnotTool(ANN.tool === 'note' ? null : 'note'));
+$('#btn-erase').addEventListener('click', () => setAnnotTool(ANN.tool === 'erase' ? null : 'erase'));
+document.querySelectorAll('#annot-pal .pc').forEach(b =>
+  b.addEventListener('click', () => {
+    ANN.color = b.dataset.c;
+    document.querySelectorAll('#annot-pal .pc').forEach(x => x.classList.toggle('on', x === b));
+  }));
+
 /* ================= 事件绑定 ================= */
 // 翻页方向语义始终相同：flipNext = 页码增大。镜像只影响"哪个按键/哪侧点击=前进"。
 // 视觉上的手势/点击已在镜像容器内自动反向，这里只需要交换键盘映射。
 function nextPage() { S.rtl ? S.flip.flipPrev() : S.flip.flipNext(); }
 function prevPage() { S.rtl ? S.flip.flipNext() : S.flip.flipPrev(); }
 
+// 跳到该页所在对开：LTR 偶数页(非0)在右→退一格；RTL 奇数页在左→退一格
+function jumpToPage(i) {
+  let target = i;
+  if (S.flip.getOrientation() === 'landscape') {
+    if (!S.rtl && i > 0 && i % 2 === 0) target = i - 1;
+    if (S.rtl && i % 2 === 1) target = i - 1;
+  }
+  S.flip.flip(target);
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && zoom.isOpen()) return zoom.close();
+  if (e.target.closest && e.target.closest('textarea, input, select')) {
+    if (e.key === 'Escape') { e.target.blur(); closeNotePop(); }
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (zoom.isOpen()) return zoom.close();
+    closeNotePop();
+    if (ANN.tool) return setAnnotTool(null);
+    return;
+  }
   if (!S.flip) return;
   switch (e.key) {
     case 'ArrowRight': case ' ': case 'PageDown':
@@ -383,6 +628,11 @@ document.addEventListener('keydown', e => {
       break;
     case 't': case 'T': toggleSidebar(); break;
     case 'r': case 'R': toggleRtl(); break;
+    case '1': setAnnotTool(ANN.tool === 'hl' ? null : 'hl'); break;
+    case '2': setAnnotTool(ANN.tool === 'pen' ? null : 'pen'); break;
+    case '3': setAnnotTool(ANN.tool === 'note' ? null : 'note'); break;
+    case '4': setAnnotTool(ANN.tool === 'erase' ? null : 'erase'); break;
+    case '0': setAnnotTool(null); break;
   }
 });
 

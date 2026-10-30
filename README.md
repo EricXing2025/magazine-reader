@@ -32,17 +32,28 @@ python3 serve.py          # 默认端口 8666
 - 界面语言：简体中文 / 繁體中文 / English（默认跟随浏览器语言）
 - 窗口窄时自动切单页模式
 
+## 批注（划线 / 高亮 / 笔记）
+
+- ▮ **高亮块**：拖出半透明色块覆盖重点内容
+- ✏️ **划线笔**：自由手绘下划线/圈注，三色可选
+- 📝 **笔记**：点一下放图钉，弹出编辑框写笔记；再点图钉可改可删
+- 🧽 **擦除**：点击任意批注删掉它
+- 批注随书保存在浏览器 localStorage，翻页不丢
+- 侧栏「批注」列表列出全部笔记，点击跳到对应页
+- 快捷键 `1`/`2`/`3`/`4` 切换工具，`0` 或 `Esc` 退出工具
+
 ## 快捷键
 
 | 键 | 作用 |
 |---|---|
 | → / 空格 | 下一页（RTL 下为 ←） |
 | ← | 上一页（RTL 下为 →） |
+| 1 / 2 / 3 / 4 | 高亮 / 划线 / 笔记 / 擦除 |
+| 0 / Esc | 退出工具 · 关闭浮层 |
 | T | 缩略图栏开关 |
 | R | LTR/RTL 切换 |
 | F | 全屏 |
 | Home / End | 首页 / 末页 |
-| Esc | 关闭放大浮层 |
 
 ## 文件结构
 
@@ -62,7 +73,7 @@ A local, dependency-free PDF magazine reader that feels like a real book: two-pa
 
 **Run it:** `python3 serve.py` then open http://localhost:8666 — drop PDFs into `books/` to see them on the shelf. Or just double-click `index.html` and drag a PDF in.
 
-**Features:** two-page spread with curl animation · per-book reading progress & direction memory (localStorage) · thumbnail sidebar · RTL mode for manga/vertical-layout magazines (fully mirrored layout & gestures) · double-click zoom overlay · dark/light themes · UI in 简体中文 / 繁體中文 / English.
+**Features:** two-page spread with curl animation · per-book reading progress & direction memory (localStorage) · thumbnail sidebar · RTL mode for manga/vertical-layout magazines (fully mirrored layout & gestures) · double-click zoom overlay · annotations: highlight blocks, freehand strokes and pinned notes (persisted per book, jump-to-page list) · dark/light themes · UI in 简体中文 / 繁體中文 / English.
 
 ## 第三方依赖（已 vendored，均有宽松开源许可）
 

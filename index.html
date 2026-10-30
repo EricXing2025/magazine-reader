@@ -17,6 +17,16 @@
     <span id="page-info"></span>
   </div>
   <div class="tb-side tb-right">
+    <div id="annot-pal" hidden>
+      <button class="pc on" style="--c:#ffd24d" data-c="#ffd24d"></button>
+      <button class="pc" style="--c:#ff7eb0" data-c="#ff7eb0"></button>
+      <button class="pc" style="--c:#6cd8ff" data-c="#6cd8ff"></button>
+    </div>
+    <button id="btn-hl" class="tb-btn" data-i18n-title="hlTitle">▮</button>
+    <button id="btn-pen" class="tb-btn" data-i18n-title="penTitle">✏️</button>
+    <button id="btn-note" class="tb-btn" data-i18n-title="noteTitle">📝</button>
+    <button id="btn-erase" class="tb-btn" data-i18n-title="eraseTitle">🧽</button>
+    <span class="tb-sep"></span>
     <select id="lang-sel" class="tb-btn" data-i18n-title="langTitle">
       <option value="zh-CN">简体中文</option>
       <option value="zh-TW">繁體中文</option>
@@ -35,6 +45,8 @@
       <div class="side-title" data-i18n="shelf">书架</div>
       <div id="shelf"></div>
     </div>
+    <div class="side-title" data-i18n="annots">批注</div>
+    <div id="annots"></div>
     <div class="side-title" data-i18n="pages">页面</div>
     <div id="thumbs"></div>
   </aside>
@@ -54,6 +66,8 @@
   <div id="zoom-box"><canvas id="zoom-canvas"></canvas></div>
   <div id="zoom-hint" data-i18n="zoomHint">滚轮缩放 · 拖拽平移 · Esc / 双击关闭</div>
 </div>
+
+<div id="note-pop" hidden></div>
 
 <input type="file" id="file-input" accept="application/pdf,.pdf" hidden>
 
