@@ -900,18 +900,46 @@ function getRecent() {
 function setRecent(l) {
   try { localStorage.setItem(LS_PREFIX + 'recent', JSON.stringify(l.slice(0, 12))); } catch {}
 }
+function getRecentOrder() {
+  try { return JSON.parse(localStorage.getItem(LS_PREFIX + 'recentOrder')) || []; } catch { return []; }
+}
+function setRecentOrder(l) {
+  try { localStorage.setItem(LS_PREFIX + 'recentOrder', JSON.stringify(l)); } catch {}
+}
+function sortedRecent() {
+  const ord = getRecentOrder();
+  return getRecent().slice().sort((a, b) => {
+    const ia = ord.indexOf(a.key), ib = ord.indexOf(b.key);
+    return (ia < 0 ? ord.length : ia) - (ib < 0 ? ord.length : ib);
+  });
+}
+function recentReorderDrop(srcKey, target, after) {
+  if (srcKey === target.key) return;
+  const l = sortedRecent();
+  const from = l.findIndex(x => x.key === srcKey);
+  if (from < 0) return;
+  const obj = l[from];
+  l.splice(from, 1);
+  l.splice(l.indexOf(target) + (after ? 1 : 0), 0, obj);
+  setRecentOrder(l.map(x => x.key));
+  renderRecent(); renderHome();
+}
 function addRecent(key, name, size) {
-  setRecent([{ key, name, size, ts: Date.now() }, ...getRecent().filter(x => x.key !== key)]);
+  const l = [{ key, name, size, ts: Date.now() }, ...getRecent().filter(x => x.key !== key)];
+  setRecent(l);
+  const keys = new Set(l.map(x => x.key));
+  setRecentOrder([key, ...getRecentOrder().filter(k => k !== key && keys.has(k))]);
   renderRecent();
 }
 function removeRecent(key) {
   setRecent(getRecent().filter(x => x.key !== key));
+  setRecentOrder(getRecentOrder().filter(k => k !== key));
   idb.del(key).catch(() => {});
   try { localStorage.removeItem(LS_PREFIX + 'cover:' + key); } catch {}
   renderRecent(); renderHome();
 }
 function renderRecent() {
-  const l = getRecent();
+  const l = sortedRecent();
   recentBox.hidden = !l.length;
   recentEl.innerHTML = '';
   for (const r of l) {
@@ -931,6 +959,8 @@ function renderRecent() {
     const d = document.createElement('button');
     d.className = 'shelf-del'; d.textContent = '×'; d.title = t('delRecentTitle');
     d.addEventListener('click', ev => { ev.stopPropagation(); removeRecent(r.key); });
+    bindDnd(row, 'recent:' + r.key, 'y',
+      (src, after) => { if (src.startsWith('recent:')) recentReorderDrop(src.slice(7), r, after); });
     row.append(b, d);
     recentEl.appendChild(row);
   }
@@ -967,13 +997,14 @@ function queueCover(cardEl, key, source) {
 }
 
 /* ================= 书架首页 ================= */
-function homeCard({ name, open, del, coverKey, coverSrc }) {
+function homeCard({ name, open, del, coverKey, coverSrc, dnd }) {
   const c = document.createElement('div');
   c.className = 'hcard';
   c.innerHTML = `<div class="hc-img">${del ? '<button class="hc-del">×</button>' : ''}</div>` +
     `<div class="hc-name">${escapeHtml(name)}</div>`;
   c.querySelector('.hc-img').addEventListener('click', open);
   if (del) c.querySelector('.hc-del').addEventListener('click', ev => { ev.stopPropagation(); del(); });
+  if (dnd) bindDnd(c, dnd.id, 'x', dnd.onDrop);
   if (coverSrc) queueCover(c, coverKey, coverSrc);
   return c;
 }
@@ -987,9 +1018,11 @@ function renderHome() {
       del: () => delShelfBook(b),
       coverKey: 'lib:' + b.name,
       coverSrc: () => fetch(b.url).then(r => r.arrayBuffer()),
+      dnd: { id: 'shelf:' + b.name,
+             onDrop: (src, after) => { if (src.startsWith('shelf:')) shelfReorderDrop(src.slice(6), b, after); } },
     }));
   }
-  for (const r of getRecent()) {
+  for (const r of sortedRecent()) {
     homeGrid.appendChild(homeCard({
       name: r.name.replace(/\.pdf$/i, ''),
       open: async () => {
@@ -1002,6 +1035,8 @@ function renderHome() {
       del: () => removeRecent(r.key),
       coverKey: r.key,
       coverSrc: () => idb.get(r.key).then(bl => bl.arrayBuffer()),
+      dnd: { id: 'recent:' + r.key,
+             onDrop: (src, after) => { if (src.startsWith('recent:')) recentReorderDrop(src.slice(7), r, after); } },
     }));
   }
   const oc = document.createElement('div');
@@ -1036,13 +1071,51 @@ function sortShelfBooks(books) {
   });
 }
 
+// 通用拖拽排序绑定（侧栏行 / 首页卡片共用）
+function bindDnd(el, dndId, axis, onDrop) {
+  el.draggable = true;
+  el.addEventListener('dragstart', ev => {
+    ev.dataTransfer.setData('text/plain', dndId);
+    ev.dataTransfer.effectAllowed = 'move';
+    el.classList.add('drag');
+  });
+  el.addEventListener('dragend', () => {
+    el.classList.remove('drag');
+    document.querySelectorAll('.shelf-row.over, .hcard.over').forEach(x => x.classList.remove('over'));
+  });
+  el.addEventListener('dragover', ev => {
+    if (!document.querySelector('.shelf-row.drag, .hcard.drag')) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'move';
+    const r = el.getBoundingClientRect();
+    el.dataset.after = (axis === 'x' ? ev.clientX > r.left + r.width / 2
+                                    : ev.clientY > r.top + r.height / 2) ? '1' : '';
+    el.classList.add('over');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('over'));
+  el.addEventListener('drop', ev => {
+    ev.preventDefault(); ev.stopPropagation();
+    onDrop(ev.dataTransfer.getData('text/plain'), el.dataset.after === '1');
+  });
+}
+
+function shelfReorderDrop(srcName, targetBook, after) {
+  if (srcName === targetBook.name) return;
+  const from = (S.shelfBooks || []).findIndex(x => x.name === srcName);
+  if (from < 0) return;
+  const obj = S.shelfBooks[from];
+  S.shelfBooks.splice(from, 1);
+  S.shelfBooks.splice(S.shelfBooks.indexOf(targetBook) + (after ? 1 : 0), 0, obj);
+  saveShelfOrder();
+  renderShelfItems(); renderHome();
+}
+
 function renderShelfItems() {
   const shelf = $('#shelf');
   shelf.innerHTML = '';
   for (const b of (S.shelfBooks || [])) {
     const row = document.createElement('div');
     row.className = 'shelf-row';
-    row.draggable = true;
     const btn = document.createElement('button');
     btn.className = 'shelf-item' + (S.key === 'lib:' + b.name ? ' cur' : '');
     btn.textContent = b.name.replace(/\.pdf$/i, '');
@@ -1055,36 +1128,8 @@ function renderShelfItems() {
     const d = document.createElement('button');
     d.className = 'shelf-del'; d.textContent = '×'; d.title = t('delShelfTitle');
     d.addEventListener('click', ev => { ev.stopPropagation(); delShelfBook(b); });
-    // 拖拽排序
-    row.addEventListener('dragstart', ev => {
-      ev.dataTransfer.setData('text/plain', b.name);
-      ev.dataTransfer.effectAllowed = 'move';
-      row.classList.add('drag');
-    });
-    row.addEventListener('dragend', () => {
-      row.classList.remove('drag');
-      shelf.querySelectorAll('.shelf-row.over').forEach(x => x.classList.remove('over'));
-    });
-    row.addEventListener('dragover', ev => {
-      if (!shelf.querySelector('.shelf-row.drag')) return;
-      ev.preventDefault();
-      ev.dataTransfer.dropEffect = 'move';
-      const mid = row.getBoundingClientRect().top + row.offsetHeight / 2;
-      row.classList.toggle('over', true);
-      row.dataset.after = ev.clientY > mid ? '1' : '';
-    });
-    row.addEventListener('dragleave', () => row.classList.remove('over'));
-    row.addEventListener('drop', ev => {
-      ev.preventDefault(); ev.stopPropagation();
-      const name = ev.dataTransfer.getData('text/plain');
-      const from = S.shelfBooks.findIndex(x => x.name === name);
-      if (from < 0 || S.shelfBooks[from] === b) return;
-      const obj = S.shelfBooks[from];
-      S.shelfBooks.splice(from, 1);
-      S.shelfBooks.splice(S.shelfBooks.indexOf(b) + (row.dataset.after ? 1 : 0), 0, obj);
-      saveShelfOrder();
-      renderShelfItems(); renderHome();
-    });
+    bindDnd(row, 'shelf:' + b.name, 'y',
+      (src, after) => { if (src.startsWith('shelf:')) shelfReorderDrop(src.slice(6), b, after); });
     row.append(btn, d);
     shelf.appendChild(row);
   }

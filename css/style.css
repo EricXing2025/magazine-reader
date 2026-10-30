@@ -93,10 +93,10 @@ select.tb-btn { padding: 4px 6px; }
 }
 .side-title:first-child { margin-top: 0; }
 .shelf-row { display: flex; gap: 5px; margin-bottom: 6px; }
-.shelf-row.drag { opacity: .4; }
-.shelf-row.over { outline: 1px dashed var(--accent); outline-offset: 2px; border-radius: 6px; }
-.shelf-row[draggable="true"] .shelf-item { cursor: grab; }
-.shelf-row.drag .shelf-item { cursor: grabbing; }
+.shelf-row.drag, .hcard.drag { opacity: .4; }
+.shelf-row.over, .hcard.over { outline: 1px dashed var(--accent); outline-offset: 2px; border-radius: 6px; }
+.shelf-row[draggable="true"] .shelf-item, .hcard[draggable="true"] { cursor: grab; }
+.shelf-row.drag .shelf-item, .hcard.drag { cursor: grabbing; }
 .shelf-item {
   flex: 1; min-width: 0; text-align: left;
   background: var(--shelf-bg); color: var(--text);
