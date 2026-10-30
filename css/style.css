@@ -92,15 +92,23 @@ select.tb-btn { padding: 4px 6px; }
   letter-spacing: 1px; margin: 10px 0 6px;
 }
 .side-title:first-child { margin-top: 0; }
+.shelf-row { display: flex; gap: 5px; margin-bottom: 6px; }
 .shelf-item {
-  display: block; width: 100%; text-align: left;
+  flex: 1; min-width: 0; text-align: left;
   background: var(--shelf-bg); color: var(--text);
   border: 1px solid var(--shelf-border); border-radius: 6px;
-  font-size: 12px; padding: 7px 9px; margin-bottom: 6px;
+  font-size: 12px; padding: 7px 9px;
   cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .shelf-item:hover { background: var(--shelf-hover); }
 .shelf-item.cur { border-color: var(--accent2); color: var(--text); }
+.shelf-del {
+  flex: none; width: 24px; border: 1px solid var(--shelf-border); border-radius: 6px;
+  background: transparent; color: var(--text3); font-size: 14px; cursor: pointer;
+  display: none;
+}
+.shelf-row:hover .shelf-del { display: block; }
+.shelf-del:hover { color: #e06c75; border-color: #e06c75; }
 
 #thumbs { display: flex; flex-direction: column; gap: 8px; }
 .thumb {
@@ -144,19 +152,50 @@ select.tb-btn { padding: 4px 6px; }
   background: linear-gradient(135deg, var(--ph1) 0%, var(--ph2) 100%);
 }
 
-#drop-hint {
+/* ---------- 书架首页 ---------- */
+#home {
   position: absolute; inset: 0;
+  overflow-y: auto;
+  padding: 40px 52px;
+}
+#home[hidden] { display: none; }
+.home-title { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 20px; }
+.home-sub { margin-top: 30px; color: var(--text3); font-size: 13px; }
+#home-grid { display: flex; flex-wrap: wrap; gap: 20px; align-content: flex-start; }
+.hcard { width: 148px; cursor: pointer; }
+.hc-img {
+  width: 148px; height: 198px; border-radius: 7px;
+  background: linear-gradient(135deg, var(--shelf-bg) 0%, var(--bg3) 100%);
+  border: 1px solid var(--line);
   display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
+  font-size: 34px; color: var(--text3);
+  background-size: cover; background-position: center top;
+  position: relative;
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+  transition: transform .15s ease, box-shadow .15s ease;
 }
-#drop-hint.gone { display: none; }
-.dh-inner {
-  border: 2px dashed var(--drop-border); border-radius: 16px;
-  padding: 44px 60px; text-align: center;
-  color: var(--drop-text); font-size: 15px; line-height: 2;
+.hcard:hover .hc-img { transform: translateY(-4px); box-shadow: 0 10px 26px rgba(0,0,0,.35); }
+.hc-img::before { content: '📖'; }
+.hcard.has-cover .hc-img::before { display: none; }
+.hc-name {
+  margin-top: 8px; font-size: 12px; color: var(--text2); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.dh-icon { font-size: 42px; }
-.dh-sub { font-size: 12px; color: var(--drop-sub); }
+.hc-del {
+  position: absolute; top: 5px; right: 5px;
+  width: 20px; height: 20px; border: none; border-radius: 50%;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 1;
+  cursor: pointer; display: none;
+}
+.hcard:hover .hc-del { display: block; }
+.hc-del:hover { background: #e06c75; }
+.hcard.open-card .hc-img {
+  border: 2px dashed var(--drop-border); background: transparent;
+  box-shadow: none; font-size: 26px;
+}
+.hcard.open-card .hc-img::before { content: '＋'; }
+.hcard.open-card:hover .hc-img { border-color: var(--accent); color: var(--accent); transform: none; }
 
 #stage.dragover {
   background: radial-gradient(ellipse at 50% 40%, var(--dragover-glow) 0%, var(--dragover-bg) 75%);

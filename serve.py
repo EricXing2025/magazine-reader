@@ -7,7 +7,7 @@ import json
 import os
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 BOOKS = os.path.join(ROOT, "books")
@@ -30,6 +30,19 @@ class Handler(SimpleHTTPRequestHandler):
             self.wfile.write(data)
             return
         return super().do_GET()
+
+    def do_DELETE(self):
+        if self.path.startswith("/books/"):
+            name = unquote(self.path[len("/books/"):])
+            p = os.path.normpath(os.path.join(BOOKS, name))
+            if p.startswith(os.path.normpath(BOOKS) + os.sep) and \
+               name.lower().endswith(".pdf") and os.path.isfile(p):
+                os.remove(p)
+                self.send_response(204)
+                self.end_headers()
+                return
+        self.send_response(404)
+        self.end_headers()
 
     def log_message(self, fmt, *args):
         sys.stderr.write("[magreader] " + fmt % args + "\n")

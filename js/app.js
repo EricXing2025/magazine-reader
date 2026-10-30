@@ -11,7 +11,7 @@ const $ = s => document.querySelector(s);
 const stage = $('#stage'), thumbsEl = $('#thumbs');
 let bookEl = $('#book');   // PageFlip.destroy() 会清掉容器，需重建并更新引用
 const pageInfo = $('#page-info'), docName = $('#doc-name');
-const dropHint = $('#drop-hint'), flipRoot = $('#flip-root');
+const homeEl = $('#home'), homeGrid = $('#home-grid'), flipRoot = $('#flip-root');
 const LS_PREFIX = 'magreader:v1:';
 const THUMB_H = 240;
 
@@ -43,6 +43,9 @@ const STR = {
     zoomHint: '滚轮缩放 · 拖拽平移 · Esc / 双击关闭',
     hlTitle: '高亮标记 (1)', penTitle: '波浪下划线 (2)', noteTitle: '添加笔记 (3)', eraseTitle: '擦除批注 (4)',
     annots: '批注', noAnnots: '还没有笔记', pageNo: '第{n}页',
+    recent: '最近打开', openLocal: '打开本地 PDF',
+    delShelfTitle: '删除该文件', delRecentTitle: '从最近记录移除',
+    confirmDel: '确定删除"{n}"吗？books/ 里的文件也会被删掉。',
     notePh: '写点什么…', delete: '删除', ok: '完成',
     title: 'MagReader · 杂志阅读器',
   },
@@ -57,6 +60,9 @@ const STR = {
     zoomHint: '滾輪縮放 · 拖曳平移 · Esc / 雙擊關閉',
     hlTitle: '高亮標記 (1)', penTitle: '波浪底線 (2)', noteTitle: '新增筆記 (3)', eraseTitle: '清除註解 (4)',
     annots: '註解', noAnnots: '尚無筆記', pageNo: '第{n}頁',
+    recent: '最近開啟', openLocal: '開啟本機 PDF',
+    delShelfTitle: '刪除該檔案', delRecentTitle: '從最近記錄移除',
+    confirmDel: '確定刪除「{n}」嗎？books/ 裡的檔案也會被刪除。',
     notePh: '寫點什麼…', delete: '刪除', ok: '完成',
     title: 'MagReader · 雜誌閱讀器',
   },
@@ -71,6 +77,9 @@ const STR = {
     zoomHint: 'Scroll to zoom · Drag to pan · Esc / double-click to close',
     hlTitle: 'Highlight (1)', penTitle: 'Wavy underline (2)', noteTitle: 'Add note (3)', eraseTitle: 'Eraser (4)',
     annots: 'Notes', noAnnots: 'No notes yet', pageNo: 'p.{n}',
+    recent: 'Recent', openLocal: 'Open a local PDF',
+    delShelfTitle: 'Delete this file', delRecentTitle: 'Remove from recent',
+    confirmDel: 'Delete "{n}"? The file in books/ will be removed.',
     notePh: 'Write a note…', delete: 'Delete', ok: 'Done',
     title: 'MagReader · Magazine Reader',
   },
@@ -104,6 +113,7 @@ function applyLang() {
     el.textContent = t(el.dataset.i18n);
   });
   document.querySelectorAll('[data-i18n-title]').forEach(el => el.title = t(el.dataset.i18nTitle));
+  renderRecent(); renderHome();   // 动态生成的书架/首页文案跟着语言走
 }
 
 /* ================= 进度存取 ================= */
@@ -250,7 +260,7 @@ function onPageChanged() {
 }
 
 /* ================= 打开文档 ================= */
-async function openData(buf, key, name) {
+async function openData(buf, key, name, opts = {}) {
   docName.textContent = t('loading') + name;
   try {
     S.doc = await pdfjsLib.getDocument({ data: buf }).promise;
@@ -276,7 +286,12 @@ async function openData(buf, key, name) {
   renderAnnotList();
   setAnnotTool(null);
   onPageChanged();
-  dropHint.classList.add('gone');
+  homeEl.hidden = true;
+  textCache.clear();
+  if (opts.remember) {
+    addRecent(key, name, buf.byteLength);
+    if (opts.blob) idb.put(key, opts.blob).catch(() => {});
+  }
 }
 
 /* ================= 缩略图 ================= */
@@ -534,13 +549,25 @@ flipRoot.addEventListener('pointerdown', e => {
     };
     update(x0);
     const move = ev => update(nx(ev));
-    const up = () => {
+    const up = async () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      if (it.pts.length && (it.pts[it.pts.length - 1][0] - it.pts[0][0]) < 0.008) {
+      const a0 = it.pts[0][0], b0 = it.pts[it.pts.length - 1][0];
+      if (b0 - a0 < 0.008) {
         ANN.items = ANN.items.filter(a => a.id !== it.id);   // 太短的误触丢弃
         drawPageAnnots(page);
+        return saveAnnots();
       }
+      // 自适应：找到附近文字行，按字号定振幅/波长，并吸附到基线下方
+      const line = await textLineNear(page, a0, b0, y0);
+      if (line) {
+        const amp = Math.min(0.006, Math.max(0.002, line.hN * 0.16));
+        const wl = Math.min(0.03, Math.max(0.010, line.hN * 1.2));
+        it.pts = wavePts(a0, b0, Math.min(1, line.baseN + line.hN * 0.28), amp, wl);
+      } else {
+        it.pts = wavePts(a0, b0, y0, 0.0035, 0.016);
+      }
+      drawPageAnnots(page);
       saveAnnots();
     };
     window.addEventListener('pointermove', move);
@@ -580,9 +607,32 @@ flipRoot.addEventListener('pointerdown', e => {
   }
 }, true);
 
+// 用 pdf.js 文本提取找拖动位置附近的文字行，返回归一化行高与基线位置
+const textCache = new Map();
+async function textLineNear(i, nx0, nx1, ny) {
+  try {
+    let pg = textCache.get(i);
+    if (!pg) {
+      const page = await S.doc.getPage(i + 1);
+      const base = page.getViewport({ scale: 1 });
+      const tc = await page.getTextContent();
+      pg = { w: base.width, h: base.height, items: tc.items.filter(x => x.height > 0) };
+      textCache.set(i, pg);
+    }
+    const yPdf = (1 - ny) * pg.h;
+    let best = null, bestD = Infinity;
+    for (const it of pg.items) {
+      const x = it.transform[4], y = it.transform[5];
+      if (x + it.width < nx0 * pg.w || x > nx1 * pg.w) continue;
+      const d = Math.abs(y - yPdf);
+      if (d < bestD) { bestD = d; best = { hN: it.height / pg.h, baseN: 1 - y / pg.h, dN: d / pg.h }; }
+    }
+    return best && best.dN < Math.max(best.hN * 2, 0.03) ? best : null;
+  } catch { return null; }
+}
+
 // 正弦波浪点列：a→b 归一化横坐标，y 为中心线
-function wavePts(a, b, y) {
-  const amp = 0.0055, wl = 0.016;
+function wavePts(a, b, y, amp = 0.0035, wl = 0.016) {
   const n = Math.max(6, Math.round((b - a) / (wl / 6)));
   const pts = [];
   for (let i = 0; i <= n; i++) {
@@ -710,7 +760,7 @@ $('#btn-open').addEventListener('click', () => $('#file-input').click());
 $('#file-input').addEventListener('change', async e => {
   const f = e.target.files[0];
   e.target.value = '';
-  if (f) openData(await f.arrayBuffer(), `file:${f.name}:${f.size}`, f.name);
+  if (f) openData(await f.arrayBuffer(), `file:${f.name}:${f.size}`, f.name, { remember: true, blob: f });
 });
 
 ['dragenter', 'dragover'].forEach(ev =>
@@ -719,7 +769,7 @@ $('#file-input').addEventListener('change', async e => {
   stage.addEventListener(ev, e => { e.preventDefault(); stage.classList.remove('dragover'); }));
 stage.addEventListener('drop', async e => {
   const f = [...(e.dataTransfer?.files || [])].find(f => /\.pdf$/i.test(f.name));
-  if (f) openData(await f.arrayBuffer(), `file:${f.name}:${f.size}`, f.name);
+  if (f) openData(await f.arrayBuffer(), `file:${f.name}:${f.size}`, f.name, { remember: true, blob: f });
 });
 
 // 双击页面 → 放大浮层（挂在稳定的 flipRoot 上，#book 重建后仍有效）
@@ -728,7 +778,188 @@ flipRoot.addEventListener('dblclick', e => {
   if (p) zoom.open(+p.dataset.idx);
 });
 
+/* ================= IndexedDB：最近打开的文件本体 ================= */
+const idb = {
+  db: null,
+  open() {
+    return this.db ? Promise.resolve(this.db) : new Promise((res, rej) => {
+      const r = indexedDB.open('magreader', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('files');
+      r.onsuccess = () => { this.db = r.result; res(this.db); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  tx(mode, fn) {
+    return this.open().then(d => new Promise((res, rej) => {
+      const t = d.transaction('files', mode);
+      const out = fn(t.objectStore('files'));
+      t.oncomplete = () => res(out && out.result !== undefined ? out.result : undefined);
+      t.onerror = () => rej(t.error);
+    }));
+  },
+  put(k, v) { return this.tx('readwrite', s => s.put(v, k)); },
+  get(k) {
+    return this.open().then(d => new Promise((res, rej) => {
+      const q = d.transaction('files').objectStore('files').get(k);
+      q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+    }));
+  },
+  del(k) { return this.tx('readwrite', s => s.delete(k)); },
+};
+
+/* ================= 最近打开 ================= */
+const recentEl = $('#recent'), recentBox = $('#recent-box');
+function getRecent() {
+  try { return JSON.parse(localStorage.getItem(LS_PREFIX + 'recent')) || []; } catch { return []; }
+}
+function setRecent(l) {
+  try { localStorage.setItem(LS_PREFIX + 'recent', JSON.stringify(l.slice(0, 12))); } catch {}
+}
+function addRecent(key, name, size) {
+  setRecent([{ key, name, size, ts: Date.now() }, ...getRecent().filter(x => x.key !== key)]);
+  renderRecent();
+}
+function removeRecent(key) {
+  setRecent(getRecent().filter(x => x.key !== key));
+  idb.del(key).catch(() => {});
+  try { localStorage.removeItem(LS_PREFIX + 'cover:' + key); } catch {}
+  renderRecent(); renderHome();
+}
+function renderRecent() {
+  const l = getRecent();
+  recentBox.hidden = !l.length;
+  recentEl.innerHTML = '';
+  for (const r of l) {
+    const row = document.createElement('div');
+    row.className = 'shelf-row';
+    const b = document.createElement('button');
+    b.className = 'shelf-item' + (S.key === r.key ? ' cur' : '');
+    b.textContent = r.name.replace(/\.pdf$/i, '');
+    b.title = r.name;
+    b.addEventListener('click', async () => {
+      try {
+        const bl = await idb.get(r.key);
+        if (!bl) return removeRecent(r.key);
+        openData(await bl.arrayBuffer(), r.key, r.name, { remember: true });
+      } catch { removeRecent(r.key); }
+    });
+    const d = document.createElement('button');
+    d.className = 'shelf-del'; d.textContent = '×'; d.title = t('delRecentTitle');
+    d.addEventListener('click', ev => { ev.stopPropagation(); removeRecent(r.key); });
+    row.append(b, d);
+    recentEl.appendChild(row);
+  }
+}
+
+/* ================= 封面渲染（缓存到 localStorage） ================= */
+async function coverFor(key, source) {
+  const ck = LS_PREFIX + 'cover:' + key;
+  try { const c = localStorage.getItem(ck); if (c) return c; } catch {}
+  const buf = await source();
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+  try {
+    const p = await doc.getPage(1);
+    const base = p.getViewport({ scale: 1 });
+    const vp = p.getViewport({ scale: 440 / base.height });
+    const cv = document.createElement('canvas');
+    cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height);
+    await p.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+    const url = cv.toDataURL('image/jpeg', .72);
+    try { localStorage.setItem(ck, url); } catch {}
+    return url;
+  } finally { doc.destroy(); }
+}
+let coverQ = Promise.resolve();
+function queueCover(cardEl, key, source) {
+  coverQ = coverQ.then(async () => {
+    if (!cardEl.isConnected) return;
+    try {
+      const u = await coverFor(key, source);
+      cardEl.querySelector('.hc-img').style.backgroundImage = `url("${u}")`;
+      cardEl.classList.add('has-cover');
+    } catch {}
+  });
+}
+
+/* ================= 书架首页 ================= */
+function homeCard({ name, open, del, coverKey, coverSrc }) {
+  const c = document.createElement('div');
+  c.className = 'hcard';
+  c.innerHTML = `<div class="hc-img">${del ? '<button class="hc-del">×</button>' : ''}</div>` +
+    `<div class="hc-name">${escapeHtml(name)}</div>`;
+  c.querySelector('.hc-img').addEventListener('click', open);
+  if (del) c.querySelector('.hc-del').addEventListener('click', ev => { ev.stopPropagation(); del(); });
+  if (coverSrc) queueCover(c, coverKey, coverSrc);
+  return c;
+}
+
+function renderHome() {
+  homeGrid.innerHTML = '';
+  for (const b of (S.shelfBooks || [])) {
+    homeGrid.appendChild(homeCard({
+      name: b.name.replace(/\.pdf$/i, ''),
+      open: async () => openData(await (await fetch(b.url)).arrayBuffer(), 'lib:' + b.name, b.name),
+      del: () => delShelfBook(b),
+      coverKey: 'lib:' + b.name,
+      coverSrc: () => fetch(b.url).then(r => r.arrayBuffer()),
+    }));
+  }
+  for (const r of getRecent()) {
+    homeGrid.appendChild(homeCard({
+      name: r.name.replace(/\.pdf$/i, ''),
+      open: async () => {
+        try {
+          const bl = await idb.get(r.key);
+          if (!bl) return removeRecent(r.key);
+          openData(await bl.arrayBuffer(), r.key, r.name, { remember: true });
+        } catch { removeRecent(r.key); }
+      },
+      del: () => removeRecent(r.key),
+      coverKey: r.key,
+      coverSrc: () => idb.get(r.key).then(bl => bl.arrayBuffer()),
+    }));
+  }
+  const oc = document.createElement('div');
+  oc.className = 'hcard open-card';
+  oc.innerHTML = `<div class="hc-img"></div><div class="hc-name">${t('openLocal')}</div>`;
+  oc.querySelector('.hc-img').addEventListener('click', () => $('#file-input').click());
+  homeGrid.appendChild(oc);
+}
+
 /* ================= 书架（serve.py 模式） ================= */
+function delShelfBook(b) {
+  if (!confirm(t('confirmDel').replace('{n}', b.name))) return;
+  fetch(b.url, { method: 'DELETE' }).then(r => {
+    if (!r.ok && r.status !== 204) return;
+    S.shelfBooks = (S.shelfBooks || []).filter(x => x !== b);
+    try { localStorage.removeItem(LS_PREFIX + 'cover:lib:' + b.name); } catch {}
+    renderShelfItems(); renderHome();
+  });
+}
+
+function renderShelfItems() {
+  const shelf = $('#shelf');
+  shelf.innerHTML = '';
+  for (const b of (S.shelfBooks || [])) {
+    const row = document.createElement('div');
+    row.className = 'shelf-row';
+    const btn = document.createElement('button');
+    btn.className = 'shelf-item' + (S.key === 'lib:' + b.name ? ' cur' : '');
+    btn.textContent = b.name.replace(/\.pdf$/i, '');
+    btn.title = b.name;
+    btn.addEventListener('click', async () => {
+      shelf.querySelectorAll('.shelf-item.cur').forEach(x => x.classList.remove('cur'));
+      btn.classList.add('cur');
+      openData(await (await fetch(b.url)).arrayBuffer(), 'lib:' + b.name, b.name);
+    });
+    const d = document.createElement('button');
+    d.className = 'shelf-del'; d.textContent = '×'; d.title = t('delShelfTitle');
+    d.addEventListener('click', ev => { ev.stopPropagation(); delShelfBook(b); });
+    row.append(btn, d);
+    shelf.appendChild(row);
+  }
+}
+
 async function loadShelf() {
   let books;
   try {
@@ -736,31 +967,15 @@ async function loadShelf() {
     if (!r.ok) return;
     books = await r.json();
   } catch { return; }
-  if (!books.length) return;
-  $('#shelf-box').hidden = false;
-  $('#shelf-hint').hidden = false;
-  const shelf = $('#shelf');
-  for (const b of books) {
-    const btn = document.createElement('button');
-    btn.className = 'shelf-item';
-    btn.textContent = b.name.replace(/\.pdf$/i, '');
-    btn.title = b.name;
-    btn.addEventListener('click', async () => {
-      shelf.querySelectorAll('.shelf-item.cur').forEach(x => x.classList.remove('cur'));
-      btn.classList.add('cur');
-      const buf = await (await fetch(b.url)).arrayBuffer();
-      openData(buf, 'lib:' + b.name, b.name);
-    });
-    shelf.appendChild(btn);
-  }
+  S.shelfBooks = books;
+  $('#shelf-box').hidden = !books.length;
+  renderShelfItems();
+  renderHome();
   // ?book=name 直接打开书架上的书
   const want = new URLSearchParams(location.search).get('book');
   if (want) {
     const b = books.find(x => x.name === want || x.name === want + '.pdf');
-    if (b) {
-      const buf = await (await fetch(b.url)).arrayBuffer();
-      openData(buf, 'lib:' + b.name, b.name);
-    }
+    if (b) openData(await (await fetch(b.url)).arrayBuffer(), 'lib:' + b.name, b.name);
   }
 }
 
@@ -768,5 +983,7 @@ loadUiPref();
 $('#lang-sel').value = UI.lang;
 applyTheme();
 applyLang();
+renderRecent();
+renderHome();
 loadShelf();
 })();

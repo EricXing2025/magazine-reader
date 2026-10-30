@@ -45,6 +45,10 @@
       <div class="side-title" data-i18n="shelf">书架</div>
       <div id="shelf"></div>
     </div>
+    <div id="recent-box" hidden>
+      <div class="side-title" data-i18n="recent">最近打开</div>
+      <div id="recent"></div>
+    </div>
     <div class="side-title" data-i18n="annots">批注</div>
     <div id="annots"></div>
     <div class="side-title" data-i18n="pages">页面</div>
@@ -52,12 +56,10 @@
   </aside>
   <div id="stage">
     <div id="flip-root"><div id="book"></div></div>
-    <div id="drop-hint">
-      <div class="dh-inner">
-        <div class="dh-icon">📖</div>
-        <div data-i18n="dropHint">把 PDF 拖到这里，或点左上角「打开」</div>
-        <div class="dh-sub" id="shelf-hint" hidden data-i18n="shelfHint">也可以从左侧书架选择</div>
-      </div>
+    <div id="home">
+      <div class="home-title" data-i18n="shelf">书架</div>
+      <div id="home-grid"></div>
+      <div class="home-sub" data-i18n="dropHint">把 PDF 拖到这里，或点左上角「打开」</div>
     </div>
   </div>
 </div>
