@@ -1,6 +1,6 @@
 # MagReader · 杂志阅读器
 
-像读书一样读 PDF 杂志和 EPUB 电子书：双页对开、卷页翻页动画、书脊阴影。纯本地离线运行，零运行时依赖。
+像读书一样读 PDF 杂志和 EPUB / MOBI 电子书：双页对开、卷页翻页动画、书脊阴影。纯本地离线运行，零运行时依赖。
 
 ![双页对开](docs/screenshot.png)
 ![亮色模式](docs/screenshot-light.png)
@@ -14,16 +14,17 @@ python3 serve.py          # 默认端口 8666
 # 浏览器打开 http://localhost:8666
 ```
 
-把 PDF / EPUB 放进 `books/` 目录，首页书架和左侧列表就会出现，点开即读。自带 `magazine-test.pdf` 测试页，clone 下来立刻可试。书架条目悬停可点 × 删除（会真删 books/ 里的文件，有确认框）。
+把 PDF / EPUB / MOBI 放进 `books/` 目录，首页书架和左侧列表就会出现，点开即读。自带 `magazine-test.pdf` 测试页，clone 下来立刻可试。书架条目悬停可点 × 删除（会真删 books/ 里的文件，有确认框）。
 
 **方式 B（零依赖）**
 
-直接双击 `index.html`，把 PDF / EPUB 拖进窗口即可（没有书架列表，其余功能相同）。
+直接双击 `index.html`，把 PDF / EPUB / MOBI 拖进窗口即可（没有书架列表，其余功能相同）。
 
 ## 功能
 
 - 双页对开 + 真实卷页动画（拖拽页角 / 点击页面 / 滑动翻页）
 - **EPUB 电子书**：浏览器内 JSZip 解包、按 OPF spine 排章、净化后用 CSS 多栏裁成固定书页——对开翻页、缩略图、进度记忆、批注、AI 提取全部通用；包内图片/CSS 走 blob URL，封面优先取包内 cover-image，没有就用书名生成文字封面
+- **MOBI / AZW3**：vendored foliate-js 解析 PalmDB，支持未压缩 / PalmDOC LZ77 / Huff-CDIC 压缩正文，`mbp:pagebreak` 分节，recindex 图片转 blob URL；封面取 EXTH coverOffset，否则文字封面
 - 封面单页展示（LTR 模式）
 - 书架首页：封面网格展示 books/ 与最近打开的书，顶栏 🏠 随时返回
 - 书架条目支持拖拽排序（侧栏列表和首页封面卡片都可以拖，「最近打开」同样可拖），顺序本地保存
@@ -72,25 +73,26 @@ python3 serve.py          # 默认端口 8666
 index.html      页面骨架
 css/style.css   样式（CSS 变量主题）
 js/app.js       全部逻辑
-vendor/         pdf.js 3.11 + page-flip 2.0.7 + jszip 3.10（已本地化，无 CDN 依赖）
+vendor/         pdf.js 3.11 + page-flip 2.0.7 + jszip 3.10 + mobi.js（已本地化，无 CDN 依赖）
 serve.py        可选本地服务器（书架 API）
-books/          把杂志 PDF / EPUB 放这里
+books/          把杂志 PDF / EPUB / MOBI 放这里
 docs/           README 截图
 ```
 
 ## English
 
-A local, dependency-free PDF magazine & EPUB book reader that feels like a real book: two-page spreads, realistic page-curl animation with spine shadow.
+A local, dependency-free PDF magazine & EPUB / MOBI book reader that feels like a real book: two-page spreads, realistic page-curl animation with spine shadow.
 
-**Run it:** `python3 serve.py` then open http://localhost:8666 — drop PDFs/EPUBs into `books/` to see them on the shelf. Or just double-click `index.html` and drag a file in.
+**Run it:** `python3 serve.py` then open http://localhost:8666 — drop PDFs/EPUBs/MOBIs into `books/` to see them on the shelf. Or just double-click `index.html` and drag a file in.
 
-**Features:** two-page spread with curl animation · **EPUB support** (in-browser unzip, spine-ordered chapters sanitized into fixed book pages via CSS columns; embedded images/CSS resolved to blob URLs) · per-book reading progress & direction memory (localStorage) · thumbnail sidebar · RTL mode for manga/vertical-layout magazines (fully mirrored layout & gestures) · double-click zoom overlay · annotations: highlight blocks, wave underlines and pinned notes (persisted per book, jump-to-page list) · dark/light themes · UI in 简体中文 / 繁體中文 / English.
+**Features:** two-page spread with curl animation · **EPUB support** (in-browser unzip, spine-ordered chapters sanitized into fixed book pages via CSS columns; embedded images/CSS resolved to blob URLs) · **MOBI/AZW3 support** (vendored foliate-js PalmDB parser: plain / PalmDOC LZ77 / Huff-CDIC text, mbp:pagebreak sections, recindex images) · per-book reading progress & direction memory (localStorage) · thumbnail sidebar · RTL mode for manga/vertical-layout magazines (fully mirrored layout & gestures) · double-click zoom overlay · annotations: highlight blocks, wave underlines and pinned notes (persisted per book, jump-to-page list) · dark/light themes · UI in 简体中文 / 繁體中文 / English.
 
 ## 第三方依赖（已 vendored，均有宽松开源许可）
 
 - [PDF.js](https://github.com/mozilla/pdf.js) 3.11 — Apache-2.0
 - [page-flip (StPageFlip)](https://github.com/Nodlik/StPageFlip) 2.0.7 — MIT
 - [JSZip](https://github.com/Stuk/jszip) 3.10 — MIT
+- [foliate-js mobi.js](https://github.com/johnfactotum/foliate-js) — MIT（PalmDB / MOBI6 / KF8 解析，vendored 为 classic script）
 
 ## License
 

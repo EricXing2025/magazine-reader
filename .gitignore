@@ -2,4 +2,8 @@
 # 个人书籍文件不入库；保留自带的测试页方便开箱即用
 books/*.pdf
 books/*.epub
+books/*.mobi
+books/*.azw3
+books/*.azw
+books/*.prc
 !books/magazine-test.pdf

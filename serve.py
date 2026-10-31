@@ -20,7 +20,7 @@ class Handler(SimpleHTTPRequestHandler):
             books = []
             if os.path.isdir(BOOKS):
                 for fn in sorted(os.listdir(BOOKS)):
-                    if fn.lower().endswith((".pdf", ".epub")):
+                    if fn.lower().endswith((".pdf", ".epub", ".mobi", ".azw3", ".azw", ".prc")):
                         books.append({"name": fn, "url": "/books/" + quote(fn)})
             data = json.dumps(books).encode()
             self.send_response(200)
@@ -36,7 +36,7 @@ class Handler(SimpleHTTPRequestHandler):
             name = unquote(self.path[len("/books/"):])
             p = os.path.normpath(os.path.join(BOOKS, name))
             if p.startswith(os.path.normpath(BOOKS) + os.sep) and \
-               name.lower().endswith((".pdf", ".epub")) and os.path.isfile(p):
+               name.lower().endswith((".pdf", ".epub", ".mobi", ".azw3", ".azw", ".prc")) and os.path.isfile(p):
                 os.remove(p)
                 self.send_response(204)
                 self.end_headers()
