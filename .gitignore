@@ -1,4 +1,5 @@
 .DS_Store
-# 个人 PDF 不入库；保留自带的测试页方便开箱即用
+# 个人书籍文件不入库；保留自带的测试页方便开箱即用
 books/*.pdf
+books/*.epub
 !books/magazine-test.pdf

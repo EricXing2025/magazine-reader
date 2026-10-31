@@ -242,6 +242,36 @@ select.tb-btn { padding: 4px 6px; }
 #ai-out:empty::before { content: attr(data-ph); color: var(--text3); }
 #ai-foot { display: flex; justify-content: flex-end; }
 
+/* ---------- EPUB 版式 ---------- */
+.epub-view {
+  position: absolute; left: 0; top: 0;
+  overflow: hidden;
+  background: var(--paper);
+  transform-origin: 0 0;
+}
+.epub-strip { position: absolute; left: 0; top: 0; }
+.eflow {
+  column-fill: auto;
+  font-family: Georgia, "Songti SC", "Noto Serif SC", serif;
+  font-size: 15px; line-height: 1.85;
+  color: #2c2a26;
+  word-break: break-word;
+  /* 不能 overflow:hidden——会裁掉横向溢出的后续栏；裁剪交给 .epub-view */
+}
+.eflow img { max-width: 100%; height: auto; }
+.eflow h1, .eflow h2, .eflow h3, .eflow h4 { line-height: 1.4; margin: .8em 0 .5em; }
+.eflow p { margin: 0 0 .6em; text-indent: 1.6em; }
+.eflow p:empty, .eflow div:empty { min-height: 1em; }
+.eflow a { color: inherit; text-decoration: none; }
+.eflow blockquote { margin: .8em 1em; color: #555; font-size: .92em; }
+.eflow ul, .eflow ol { margin: .6em 0 .6em 1.4em; padding: 0; }
+.eflow table { border-collapse: collapse; font-size: .85em; }
+.eflow td, .eflow th { border: 1px solid #ccc; padding: 3px 8px; }
+.eflow sup { font-size: .7em; vertical-align: super; }
+.eflow sub { font-size: .7em; vertical-align: sub; }
+[data-theme="light"] .eflow { color: #26241f; }
+.thumb-epub { position: relative; width: 100%; overflow: hidden; background: var(--paper); }
+
 /* ---------- zoom overlay ---------- */
 #zoom-overlay {
   position: fixed; inset: 0; z-index: 100;
@@ -252,11 +282,13 @@ select.tb-btn { padding: 4px 6px; }
 #zoom-overlay[hidden] { display: none; }
 #zoom-box { cursor: grab; }
 #zoom-box.grabbing { cursor: grabbing; }
-#zoom-canvas {
+#zoom-canvas, #zoom-dom {
   display: block;
   box-shadow: 0 12px 80px rgba(0,0,0,.8);
   transform-origin: center center;
 }
+#zoom-dom { position: relative; background: var(--paper); }
+#zoom-dom[hidden], #zoom-canvas[hidden] { display: none; }
 #zoom-hint {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
   font-size: 12px; color: #999; letter-spacing: .5px;

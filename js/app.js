@@ -151,6 +151,7 @@ function savePos() {
 
 /* ================= 页面渲染（懒加载） ================= */
 function renderPdfPage(i) {
+  if (S.epub) return renderEpubPage(i);
   // 串行队列，按与当前页距离排序调度
   if (S.rendered.has(i) || i < 0 || i >= S.numPages) return Promise.resolve();
   S.rendered.add(i);
@@ -277,9 +278,236 @@ function onPageChanged() {
     thumbsEl.querySelector(`.thumb[data-idx="${p}"]`)?.classList.add('cur');
 }
 
+/* ================= EPUB（JSZip 解包 + CSS 多栏分页） ================= */
+const EPUB_ASPECT = 1.42, EPUB_GAP = 56;   // 栏间隙兼作每页左右边距
+const normPath = p => p.split('/').reduce((a, s) =>
+  s === '..' ? a.slice(0, -1) : (s === '.' || s === '') ? a : [...a, s], []).join('/');
+
+const Epub = {
+  async parse(buf) {
+    const zip = await JSZip.loadAsync(buf);
+    const cf = zip.file('META-INF/container.xml');
+    if (!cf) throw new Error('missing META-INF/container.xml');
+    const cDoc = new DOMParser().parseFromString(await cf.async('text'), 'application/xml');
+    const rf = cDoc.querySelector('rootfile');
+    if (!rf) throw new Error('bad container.xml');
+    const opfPath = decodeURI(rf.getAttribute('full-path'));
+    const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/')) : '';
+    const res = rel => normPath((opfDir ? opfDir + '/' : '') + decodeURI(rel.split('#')[0]));
+    const of = zip.file(opfPath);
+    if (!of) throw new Error('missing ' + opfPath);
+    const oDoc = new DOMParser().parseFromString(await of.async('text'), 'application/xml');
+    const title = ((oDoc.getElementsByTagNameNS('*', 'title')[0] || {}).textContent || '').trim();
+    const manifest = {};
+    for (const it of oDoc.querySelectorAll('manifest item')) {
+      manifest[it.getAttribute('id')] = {
+        href: it.getAttribute('href'), type: it.getAttribute('media-type') || '',
+        props: it.getAttribute('properties') || '',
+      };
+    }
+    const spine = [...oDoc.querySelectorAll('spine itemref')]
+      .map(x => manifest[x.getAttribute('idref')]).filter(Boolean);
+    const urls = [];
+    const blobOf = async path => { const f = zip.file(path); return f ? await f.async('blob') : null; };
+    const urlOf = async path => {
+      const b = await blobOf(path);
+      if (!b) return null;
+      const u = URL.createObjectURL(b);
+      urls.push(u); return u;
+    };
+    let coverBlob = null;
+    const cm = Object.values(manifest).find(m => (m.props || '').includes('cover-image'))
+      || Object.values(manifest).find(m => /(^|\/)cover[^/]*\.(jpe?g|png|gif|webp)$/i.test(m.href || ''));
+    if (cm) coverBlob = await blobOf(res(cm.href));
+    return { zip, res, manifest, spine, title, coverBlob, urls, blobOf, urlOf };
+  },
+
+  cssScope(css, scope) {
+    return css.replace(/@import[^;]+;/g, '').replace(/(^|\})\s*([^{}@]+)\{/g, (m, p1, sel) => {
+      const s = sel.split(',').map(x => {
+        x = x.trim().replace(/^(html|body)\b/, '').trim();
+        return x ? scope + ' ' + x : scope;
+      }).join(', ');
+      return p1 + ' ' + s + '{';
+    });
+  },
+
+  async buildChapter(E, item, idx, refW, refH) {
+    const f = E.zip.file(E.res(item.href));
+    if (!f) return null;
+    const xml = await f.async('text');
+    let doc = new DOMParser().parseFromString(xml, 'application/xhtml+xml');
+    if (doc.querySelector('parsererror')) doc = new DOMParser().parseFromString(xml, 'text/html');
+    const fileDir = E.res(item.href).split('/').slice(0, -1).join('/');
+    const abs = rel => normPath((fileDir ? fileDir + '/' : '') + decodeURI(rel.split('#')[0]));
+    const urlMap = new Map();
+    const getUrl = async rel => {
+      if (!rel || /^(https?|data|blob):/i.test(rel)) return null;
+      const p = abs(rel);
+      if (!urlMap.has(p)) urlMap.set(p, await E.urlOf(p));
+      return urlMap.get(p);
+    };
+    // CSS：内联 style + 外部 link（url() 相对各自文件目录解析）
+    const chunks = [];
+    for (const st of [...doc.querySelectorAll('style')]) {
+      chunks.push({ css: st.textContent, dir: fileDir }); st.remove();
+    }
+    for (const ln of [...doc.querySelectorAll('link')]) {
+      const rel = (ln.getAttribute('rel') || '').toLowerCase();
+      const href = ln.getAttribute('href');
+      ln.remove();
+      if (!rel.includes('stylesheet') || !href) continue;
+      const p = abs(href);
+      const b = await E.blobOf(p);
+      if (b) chunks.push({ css: await b.text(), dir: p.split('/').slice(0, -1).join('/') });
+    }
+    for (const c of chunks) {   // 先把 CSS 里引用的资源全部物化成 blob URL
+      const wants = new Set();
+      c.css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (m, q, p) => {
+        if (!/^(https?|data|blob):/i.test(p)) wants.add(normPath((c.dir ? c.dir + '/' : '') + decodeURI(p.split('#')[0])));
+        return m;
+      });
+      for (const p of wants) if (!urlMap.has(p)) urlMap.set(p, await E.urlOf(p));
+    }
+    let scoped = '';
+    for (const c of chunks) {
+      const t = c.css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (m, q, p) => {
+        const u = urlMap.get(normPath((c.dir ? c.dir + '/' : '') + decodeURI(p.split('#')[0])));
+        return u ? `url("${u}")` : m;
+      });
+      scoped += Epub.cssScope(t, '.eflow-c' + idx) + '\n';
+    }
+    // 净化 + 资源重写
+    for (const el of doc.querySelectorAll('script,iframe,object,embed,form,input,button,select,textarea')) el.remove();
+    for (const el of doc.querySelectorAll('*')) {
+      for (const a of [...el.attributes]) {
+        const n = a.name.toLowerCase();
+        if (n.startsWith('on')) el.removeAttribute(a.name);
+        else if ((n === 'href' || n === 'src') && /^\s*javascript:/i.test(a.value)) el.setAttribute(a.name, '#');
+      }
+    }
+    for (const img of doc.querySelectorAll('img')) {
+      const u = await getUrl(img.getAttribute('src'));
+      if (u) img.setAttribute('src', u);
+    }
+    for (const im of doc.querySelectorAll('image')) {
+      const u = await getUrl(im.getAttribute('xlink:href') || im.getAttribute('href'));
+      if (u) im.setAttribute('href', u);
+    }
+    const flow = document.createElement('div');
+    flow.className = 'eflow eflow-c' + idx;
+    // 关键：column-width 只是建议值，实际栏宽 = (容器宽+gap)/n - gap。
+    // 容器宽必须 = refW - gap，才能精确得到 refW-gap 宽的栏、refW 的节距。
+    flow.style.width = (refW - EPUB_GAP) + 'px';
+    flow.style.columnWidth = (refW - EPUB_GAP) + 'px';
+    flow.style.columnGap = EPUB_GAP + 'px';
+    flow.style.height = refH + 'px';
+    flow.style.padding = '26px 0';
+    const body = doc.body || doc.documentElement;
+    for (const n of [...body.childNodes]) flow.appendChild(n.cloneNode(true));
+    const text = flow.textContent || '';
+    const st2 = document.createElement('style');
+    st2.textContent = scoped;
+    flow.prepend(st2);
+    return { flow, text };
+  },
+
+  measure(flow, refW, refH) {
+    return new Promise(res => {
+      const m = document.createElement('div');
+      m.style.cssText = 'position:fixed;left:-99999px;top:0;visibility:hidden;';
+      const c = flow.cloneNode(true);
+      m.appendChild(c);
+      document.body.appendChild(m);
+      const imgs = [...c.querySelectorAll('img')];
+      const done = () => {
+        const w = c.scrollWidth;
+        m.remove();
+        res(Math.max(1, Math.ceil((w + EPUB_GAP) / refW - 0.001)));
+      };
+      if (!imgs.length) return done();
+      Promise.race([
+        Promise.all(imgs.map(i => i.complete ? 1 : i.decode().catch(() => {}))),
+        new Promise(r => setTimeout(r, 2500)),
+      ]).then(done);
+    });
+  },
+
+  makeView(pg, E) {
+    const v = document.createElement('div');
+    v.className = 'epub-view';
+    v.style.width = E.refW + 'px';
+    v.style.height = E.refH + 'px';
+    const strip = document.createElement('div');
+    strip.className = 'epub-strip';
+    strip.style.transform = `translateX(${-pg.off * E.refW}px)`;
+    strip.appendChild(E.chapters[pg.ch].flow.cloneNode(true));
+    v.appendChild(strip);
+    return v;
+  },
+};
+
+async function openEpub(buf, key, name, opts = {}) {
+  docName.textContent = t('loading') + name;
+  let E;
+  try { E = await Epub.parse(buf); }
+  catch (e) { docName.textContent = t('openFail') + (e && e.message || e); return; }
+  S.pageAspect = EPUB_ASPECT;
+  const { w: refW, h: refH } = pageBox();
+  const chapters = [], texts = [], pages = [];
+  for (let i = 0; i < E.spine.length; i++) {
+    try {
+      const ch = await Epub.buildChapter(E, E.spine[i], i, refW, refH);
+      if (!ch || (!ch.text.trim() && !ch.flow.querySelector('img'))) continue;
+      const n = await Epub.measure(ch.flow, refW, refH);
+      const ci = chapters.length;
+      chapters.push(ch); texts.push(ch.text);
+      for (let o = 0; o < n; o++) pages.push({ ch: ci, off: o });
+    } catch {}
+  }
+  if (!pages.length) { docName.textContent = t('openFail') + 'empty epub'; E.urls.forEach(u => URL.revokeObjectURL(u)); return; }
+  S.epub = { title: E.title, pages, chapters, texts, urls: E.urls, refW, refH };
+  S.doc = E;   // 保持 truthy，供批注/工具守卫使用
+  S.numPages = pages.length;
+  S.key = key;
+  docName.textContent = E.title || name;
+  buildPageDivs();
+  const saved = loadPos(key);
+  setRtl(false);               // EPUB 不适用 RTL 镜像（会反字）
+  initFlip(saved ? Math.min(saved.idx, S.numPages - 1) : 0);
+  buildThumbs();
+  loadAnnots();
+  drawAllAnnots();
+  renderAnnotList();
+  setAnnotTool(null);
+  onPageChanged();
+  homeEl.hidden = true;
+  textCache.clear();
+  if (opts.remember) {
+    addRecent(key, name, buf.byteLength);
+    if (opts.blob) idb.put(key, opts.blob).catch(() => {});
+  }
+}
+
+function renderEpubPage(i) {
+  if (S.rendered.has(i) || i < 0 || i >= S.numPages) return Promise.resolve();
+  S.rendered.add(i);
+  const holder = S.pageDivs[i];
+  if (!holder || holder.querySelector('.epub-view')) return Promise.resolve();
+  const v = Epub.makeView(S.epub.pages[i], S.epub);
+  holder.querySelector('.ph')?.remove();
+  holder.querySelector('.page-inner').prepend(v);
+  // 懒渲染时该页可能尚未布局（clientWidth=0），用 PageFlip 的实际页宽定缩放
+  const pw = (S.flip && S.flip.getBounds && S.flip.getBounds().pageWidth) || pageBox().w;
+  v.style.transform = `scale(${pw / S.epub.refW})`;
+  return Promise.resolve();
+}
+
 /* ================= 打开文档 ================= */
 async function openData(buf, key, name, opts = {}) {
+  if (/\.epub$/i.test(name)) return openEpub(buf, key, name, opts);
   docName.textContent = t('loading') + name;
+  if (S.epub) { S.epub.urls.forEach(u => URL.revokeObjectURL(u)); S.epub = null; }
   try {
     S.doc = await pdfjsLib.getDocument({ data: buf }).promise;
   } catch (e) {
@@ -328,6 +556,7 @@ function closeDoc() {
   bookEl.id = 'book';
   flipRoot.appendChild(bookEl);
   S.doc = null; S.key = null; S.numPages = 0; S.pageDivs = [];
+  if (S.epub) { S.epub.urls.forEach(u => URL.revokeObjectURL(u)); S.epub = null; }
   S.rendered.clear();
   thumbIO?.disconnect();
   thumbsEl.innerHTML = '';
@@ -367,6 +596,18 @@ function buildThumbs() {
 let thumbQ = Promise.resolve();
 function renderThumb(i, el) {
   thumbQ = thumbQ.then(async () => {
+    if (S.epub) {
+      if (!el.isConnected || el.querySelector('.thumb-epub')) return;
+      const v = Epub.makeView(S.epub.pages[i], S.epub);
+      const wrap = document.createElement('div');
+      wrap.className = 'thumb-epub';
+      const w = el.clientWidth || 140;
+      wrap.style.height = Math.floor(w * S.epub.refH / S.epub.refW) + 'px';
+      v.style.transform = `scale(${w / S.epub.refW})`;
+      wrap.appendChild(v);
+      el.prepend(wrap);
+      return;
+    }
     if (!el.isConnected || el.querySelector('canvas')) return;
     try {
       const page = await S.doc.getPage(i + 1);
@@ -397,11 +638,21 @@ function toggleRtl() {
 
 /* ================= 缩放浮层 ================= */
 const zoom = (() => {
-  const ov = $('#zoom-overlay'), box = $('#zoom-box'), cv = $('#zoom-canvas');
-  let z = 1, tx = 0, ty = 0, drag = null;
+  const ov = $('#zoom-overlay'), box = $('#zoom-box'), cv = $('#zoom-canvas'), dom = $('#zoom-dom');
+  let z = 1, tx = 0, ty = 0, drag = null, zoomEl = cv;
 
-  function apply() { cv.style.transform = `translate(${tx}px,${ty}px) scale(${z})`; }
+  function apply() { zoomEl.style.transform = `translate(${tx}px,${ty}px) scale(${z})`; }
   async function open(pdfIdx) {
+    if (S.epub) {
+      cv.hidden = true; dom.hidden = false; zoomEl = dom;
+      dom.replaceChildren(Epub.makeView(S.epub.pages[pdfIdx], S.epub));
+      dom.style.width = S.epub.refW + 'px'; dom.style.height = S.epub.refH + 'px';
+      z = (innerHeight * 0.92) / S.epub.refH;
+      tx = ty = 0; apply();
+      ov.hidden = false;
+      return;
+    }
+    cv.hidden = false; dom.hidden = true; zoomEl = cv;
     const page = await S.doc.getPage(pdfIdx + 1);
     const base = page.getViewport({ scale: 1 });
     const vp = page.getViewport({ scale: (innerHeight * S.dpr * 2.2) / base.height });
@@ -853,7 +1104,7 @@ $('#file-input').addEventListener('change', async e => {
 ['dragleave', 'drop'].forEach(ev =>
   stage.addEventListener(ev, e => { e.preventDefault(); stage.classList.remove('dragover'); }));
 stage.addEventListener('drop', async e => {
-  const f = [...(e.dataTransfer?.files || [])].find(f => /\.pdf$/i.test(f.name));
+  const f = [...(e.dataTransfer?.files || [])].find(f => /\.(pdf|epub)$/i.test(f.name));
   if (f) openData(await f.arrayBuffer(), `file:${f.name}:${f.size}`, f.name, { remember: true, blob: f });
 });
 
@@ -947,7 +1198,7 @@ function renderRecent() {
     row.className = 'shelf-row';
     const b = document.createElement('button');
     b.className = 'shelf-item' + (S.key === r.key ? ' cur' : '');
-    b.textContent = r.name.replace(/\.pdf$/i, '');
+    b.textContent = r.name.replace(/\.(pdf|epub)$/i, '');
     b.title = r.name;
     b.addEventListener('click', async () => {
       try {
@@ -967,10 +1218,55 @@ function renderRecent() {
 }
 
 /* ================= 封面渲染（缓存到 localStorage） ================= */
+// EPUB 封面：优先包内 cover-image，否则用书名画一张文字封面
+async function epubCover(buf) {
+  const E = await Epub.parse(buf);
+  try {
+    const cv = document.createElement('canvas');
+    if (E.coverBlob) {
+      const img = await new Promise((res, rej) => {
+        const i = new Image();
+        i.onload = () => res(i); i.onerror = rej;
+        i.src = URL.createObjectURL(E.coverBlob);
+      });
+      try {
+        const k = 440 / img.naturalHeight;
+        cv.width = Math.floor(img.naturalWidth * k); cv.height = 440;
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        return cv.toDataURL('image/jpeg', .72);
+      } finally { URL.revokeObjectURL(img.src); }
+    }
+    // 无封面图 → 画文字封面
+    cv.width = 310; cv.height = 440;
+    const g = cv.getContext('2d');
+    const gr = g.createLinearGradient(0, 0, 310, 440);
+    gr.addColorStop(0, '#3b4a6b'); gr.addColorStop(1, '#232a3f');
+    g.fillStyle = gr; g.fillRect(0, 0, 310, 440);
+    g.fillStyle = '#e8e4da';
+    g.font = '600 26px Georgia, "Songti SC", serif';
+    g.textAlign = 'center';
+    const words = (E.title || 'EPUB').split('');
+    let line = '', ly = 200;
+    for (const ch of words) {
+      if (g.measureText(line + ch).width > 250) { g.fillText(line, 155, ly); ly += 36; line = ''; }
+      line += ch;
+    }
+    g.fillText(line, 155, ly);
+    g.font = '13px sans-serif'; g.fillStyle = '#8a93ad';
+    g.fillText('EPUB', 155, 400);
+    return cv.toDataURL('image/jpeg', .72);
+  } finally { E.urls.forEach(u => URL.revokeObjectURL(u)); }
+}
+
 async function coverFor(key, source) {
   const ck = LS_PREFIX + 'cover:' + key;
   try { const c = localStorage.getItem(ck); if (c) return c; } catch {}
   const buf = await source();
+  if (/\.epub(:|$)/i.test(key)) {   // key 形如 file:x.epub:123 / lib:x.epub
+    const url = await epubCover(buf);
+    try { localStorage.setItem(ck, url); } catch {}
+    return url;
+  }
   const doc = await pdfjsLib.getDocument({ data: buf }).promise;
   try {
     const p = await doc.getPage(1);
@@ -1013,7 +1309,7 @@ function renderHome() {
   homeGrid.innerHTML = '';
   for (const b of (S.shelfBooks || [])) {
     homeGrid.appendChild(homeCard({
-      name: b.name.replace(/\.pdf$/i, ''),
+      name: b.name.replace(/\.(pdf|epub)$/i, ''),
       open: async () => openData(await (await fetch(b.url)).arrayBuffer(), 'lib:' + b.name, b.name),
       del: () => delShelfBook(b),
       coverKey: 'lib:' + b.name,
@@ -1024,7 +1320,7 @@ function renderHome() {
   }
   for (const r of sortedRecent()) {
     homeGrid.appendChild(homeCard({
-      name: r.name.replace(/\.pdf$/i, ''),
+      name: r.name.replace(/\.(pdf|epub)$/i, ''),
       open: async () => {
         try {
           const bl = await idb.get(r.key);
@@ -1118,7 +1414,7 @@ function renderShelfItems() {
     row.className = 'shelf-row';
     const btn = document.createElement('button');
     btn.className = 'shelf-item' + (S.key === 'lib:' + b.name ? ' cur' : '');
-    btn.textContent = b.name.replace(/\.pdf$/i, '');
+    btn.textContent = b.name.replace(/\.(pdf|epub)$/i, '');
     btn.title = b.name;
     btn.addEventListener('click', async () => {
       shelf.querySelectorAll('.shelf-item.cur').forEach(x => x.classList.remove('cur'));
@@ -1187,6 +1483,7 @@ $('#ai-save').addEventListener('click', () => {
 });
 
 async function extractDocText(cap = 50000) {
+  if (S.epub) return S.epub.texts.join('\n').slice(0, cap);
   const parts = [];
   let len = 0;
   for (let i = 1; i <= S.numPages; i++) {
